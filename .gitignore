@@ -5,6 +5,7 @@ vault/
 logs/
 obsidian-wiki-config/
 postgress/pgsocket/
+config/model-settings.json
 
 # secrets / local env
 .env
