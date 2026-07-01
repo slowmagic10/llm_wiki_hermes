@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: harbor.cm.cluster:9443/docker.io/pgvector/pgvector:pg16
+    container_name: sales-wiki-postgres
+    environment:
+      POSTGRES_DB: rag
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag
+    ports:
+      - "25432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - /root/llm_wiki_hermes/postgress/pgsocket:/var/run/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

@@ -1,0 +1,136 @@
+services:
+  rag-api:
+    build:
+      context: ./services/obsidian-rag-mcp
+      network: host
+    image: sales-wiki-rag:local
+    container_name: sales-wiki-rag-api
+    restart: unless-stopped
+    env_file:
+      - /etc/obsidian-rag-mcp.env
+    environment:
+      VAULT_PATH: /root/llm_wiki_hermes/vault
+      DATABASE_URL: postgresql://rag:rag@postgres:5432/rag
+      LITELLM_BASE_URL: http://172.19.0.1:14000/v1
+      NO_PROXY: "*"
+      no_proxy: "*"
+    volumes:
+      - /root/llm_wiki_hermes/vault:/root/llm_wiki_hermes/vault:ro
+    ports:
+      - "18080:18080"
+    networks:
+      - default
+      - postgres_net
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:18080/health", timeout=5).read()'
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  mcp-bridge:
+    image: sales-wiki-rag:local
+    container_name: sales-wiki-mcp-bridge
+    restart: unless-stopped
+    depends_on:
+      rag-api:
+        condition: service_started
+    env_file:
+      - /etc/obsidian-rag-mcp.env
+    environment:
+      VAULT_PATH: /root/llm_wiki_hermes/vault
+      DATABASE_URL: postgresql://rag:rag@postgres:5432/rag
+      LITELLM_BASE_URL: http://172.19.0.1:14000/v1
+      NO_PROXY: "*"
+      no_proxy: "*"
+    volumes:
+      - /root/llm_wiki_hermes/vault:/root/llm_wiki_hermes/vault:ro
+    ports:
+      - "127.0.0.1:18081:18081"
+    networks:
+      - default
+      - postgres_net
+    command:
+      - python
+      - -m
+      - app.mcp_server
+
+  admin-web:
+    build:
+      context: ./services/admin-web
+      network: host
+    image: sales-wiki-admin-web:local
+    container_name: sales-wiki-admin-web
+    restart: unless-stopped
+    depends_on:
+      rag-api:
+        condition: service_started
+    env_file:
+      - /etc/obsidian-rag-mcp.env
+    environment:
+      PROJECT_ROOT: /root/llm_wiki_hermes
+      VAULT_PATH: /root/llm_wiki_hermes/vault
+      RAG_BASE_URL: http://rag-api:18080
+      DATABASE_URL: postgresql://rag:rag@postgres:5432/rag
+      SYNC_SCRIPT: /root/llm_wiki_hermes/bin/sync_vault_and_rag_container.sh
+      SERVICE_MODE: docker
+      NO_PROXY: "*"
+      no_proxy: "*"
+    volumes:
+      - /root/llm_wiki_hermes/vault:/root/llm_wiki_hermes/vault
+      - /root/llm_wiki_hermes/logs:/root/llm_wiki_hermes/logs
+      - /root/llm_wiki_hermes/bin:/root/llm_wiki_hermes/bin:ro
+      - /root/llm_wiki_hermes/docs:/root/llm_wiki_hermes/docs:ro
+      - /root/llm_wiki_hermes/obsidian-wiki-config:/root/.obsidian-wiki
+      - /root/.ssh:/root/.ssh:ro
+    ports:
+      - "18090:18090"
+    networks:
+      - default
+      - postgres_net
+    command:
+      - /bin/sh
+      - -lc
+      - 'obsidian-wiki setup --vault /root/llm_wiki_hermes/vault >/tmp/obsidian-wiki-setup.log 2>&1 || true; exec python -m uvicorn main:app --host 0.0.0.0 --port 18090'
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:18090/health", timeout=5).read()'
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  sync-runner:
+    image: alpine/git:latest
+    container_name: sales-wiki-sync-runner
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - /root/llm_wiki_hermes/bin/sync_loop_container.sh
+    depends_on:
+      rag-api:
+        condition: service_started
+    environment:
+      RAG_BASE_URL: http://rag-api:18080
+      SYNC_INTERVAL_SECONDS: "86400"
+      NO_PROXY: "*"
+      no_proxy: "*"
+    volumes:
+      - /root/llm_wiki_hermes/vault:/root/llm_wiki_hermes/vault
+      - /root/llm_wiki_hermes/logs:/root/llm_wiki_hermes/logs
+      - /root/llm_wiki_hermes/bin:/root/llm_wiki_hermes/bin:ro
+      - /root/.ssh:/root/.ssh:ro
+    networks:
+      - default
+
+networks:
+  postgres_net:
+    external: true
+    name: postgress_default

@@ -1,0 +1,23 @@
+# knowledge vault, managed as separate repo
+vault/
+
+# runtime data
+logs/
+obsidian-wiki-config/
+postgress/pgsocket/
+
+# secrets / local env
+.env
+*.env
+/etc/
+*.key
+*.pem
+
+# python cache
+__pycache__/
+*.pyc
+.venv/
+
+# backups
+*.bak
+*.bak-*

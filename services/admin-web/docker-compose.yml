@@ -1,0 +1,16 @@
+services:
+  admin-web:
+    build: .
+    container_name: sales-wiki-admin-web
+    ports:
+      - "18090:18090"
+    environment:
+      PROJECT_ROOT: /data
+      VAULT_PATH: /data/vault
+      RAG_BASE_URL: http://host.docker.internal:18080
+      DATABASE_URL: postgresql://rag:rag@host.docker.internal:25432/rag
+      SYNC_SCRIPT: /data/bin/sync_vault_and_rag.sh
+    volumes:
+      - /root/llm_wiki_hermes:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
