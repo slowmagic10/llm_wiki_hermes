@@ -36,7 +36,7 @@ REQUIRED_FRONTMATTER = ("title", "type", "status", "owner", "updated")
 VALID_STATUS = {"active", "draft", "archived"}
 SKU_KEYS = ("sku", "aliases")
 
-app = FastAPI(title="Sales Wiki Admin", version="0.1.0")
+app = FastAPI(title="LLM Wiki Admin", version="0.1.0")
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None, timeout: int = 120) -> dict[str, Any]:
@@ -192,7 +192,7 @@ HTML_PAGE = r'''<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sales Wiki Admin</title>
+  <title>LLM Wiki Admin</title>
   <style>
     :root {
       color-scheme: light;
@@ -514,8 +514,8 @@ HTML_PAGE = r'''<!doctype html>
 <div class="shell">
 <aside>
   <div class="brand">
-    <div class="brand-title">Sales Wiki Admin</div>
-    <div class="brand-subtitle">正式知识库管理控制台</div>
+    <div class="brand-title">LLM Wiki Admin</div>
+    <div class="brand-subtitle">企业知识库管理控制台</div>
   </div>
   <nav>
     <div class="nav-group">总览</div>
@@ -538,7 +538,7 @@ HTML_PAGE = r'''<!doctype html>
 <header>
   <div>
     <div class="header-title" id="pageTitle">仪表盘</div>
-    <div class="header-meta" id="pageMeta">销售/售前正式 Wiki 运行状态</div>
+    <div class="header-meta" id="pageMeta">企业正式 Wiki 运行状态</div>
   </div>
   <div class="header-right">
     <span class="badge" id="globalHealth">未检查</span>
@@ -704,7 +704,7 @@ HTML_PAGE = r'''<!doctype html>
 <script>
 const $ = (id) => document.getElementById(id);
 const pageInfo = {
-  dashboard:['仪表盘','销售/售前正式 Wiki 运行状态'],
+  dashboard:['仪表盘','企业正式 Wiki 运行状态'],
   models:['模型配置','LiteLLM 可用模型与 RAG 运行模型'],
   sync:['同步管理','Git 同步和索引刷新'],
   rag:['RAG 测试','正式 Wiki 问答链路验证'],

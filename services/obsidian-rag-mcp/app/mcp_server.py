@@ -66,6 +66,23 @@ def _final_answer_has_no_basis(answer: str) -> bool:
     return any(marker in normalized for marker in markers)
 
 
+def _final_answer_is_invalid(answer: str) -> bool:
+    text = (answer or "").strip()
+    if not text:
+        return True
+
+    required_headings = ("结论：", "适用场景：", "注意事项：", "可替代方案：", "来源：")
+    if not all(heading in text for heading in required_headings):
+        return True
+
+    zero_count = text.count("0")
+    chinese_count = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+    if len(text) >= 80 and zero_count / max(len(text), 1) > 0.5 and chinese_count < 10:
+        return True
+
+    return False
+
+
 def _mark_no_supported_answer(query: str, result: dict[str, Any]) -> None:
     result["answerable"] = False
     result["confidence"] = 0.0
@@ -79,19 +96,35 @@ def _fallback_answer(result: dict[str, Any]) -> str:
     if not result.get("answerable"):
         return _not_answerable_message()
     chunks = result.get("chunks") or []
-    first_text = str(chunks[0].get("text") or "").strip() if chunks else "未在正式 Wiki 中找到明确依据。"
+
+    def section_text(*heading_keywords: str) -> str:
+        for keyword in heading_keywords:
+            for item in chunks:
+                heading = " > ".join(item.get("heading_path") or [])
+                if keyword not in heading:
+                    continue
+                text = str(item.get("text") or "").strip()
+                if text:
+                    return text
+        return "未在正式 Wiki 中找到明确依据。"
+
+    conclusion = section_text("一句话结论", "结论")
+    scenarios = section_text("适用场景")
+    notes = section_text("限制条件", "注意事项", "兼容性", "售前确认点")
+    alternatives = section_text("替代方案")
+
     lines = [
         "结论：",
-        first_text,
+        conclusion,
         "",
         "适用场景：",
-        "- 未在正式 Wiki 中找到明确依据。",
+        scenarios,
         "",
         "注意事项：",
-        "- 未在正式 Wiki 中找到明确依据。",
+        notes,
         "",
         "可替代方案：",
-        "- 未在正式 Wiki 中找到明确依据。",
+        alternatives,
     ]
     if result.get("citations"):
         lines.append("")
@@ -143,6 +176,8 @@ async def _build_final_answer(query: str, result: dict[str, Any]) -> str:
     try:
         answer = await chat_complete(messages)
     except Exception:
+        return _fallback_answer(result)
+    if _final_answer_is_invalid(answer):
         return _fallback_answer(result)
     if _final_answer_has_no_basis(answer):
         return _not_answerable_message()
