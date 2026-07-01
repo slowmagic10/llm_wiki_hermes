@@ -7,10 +7,10 @@ from app.retriever import _record_gap, search
 
 
 mcp = FastMCP(
-    "sales_wiki",
+    "llm_wiki",
     instructions=(
-        "Read-only sales presales wiki retrieval and answer generation. For product, "
-        "compatibility, configuration, and FAQ questions, use search_sales_wiki and "
+        "Read-only enterprise wiki retrieval and answer generation. For knowledge, "
+        "policy, product, compatibility, configuration, and FAQ questions, use search_llm_wiki and "
         "answer from final_answer. Do not replace final_answer with general model "
         "knowledge. If answerable is false, say the official wiki has no reliable source."
     ),
@@ -143,7 +143,7 @@ async def _build_final_answer(query: str, result: dict[str, Any]) -> str:
         {
             "role": "system",
             "content": (
-                "你是企业内部销售/售前 Wiki 回答器。只能使用用户提供的来源内容回答。"
+                "你是企业内部正式 Wiki 回答器。只能使用用户提供的来源内容回答。"
                 "禁止使用来源以外的常识、规格、推测或补充说明。"
                 "回答必须中文、客观、简洁。必须保留来源中出现的限制条件、版本号、替代料号。"
                 "固定输出五个标题，顺序必须是：结论、适用场景、注意事项、可替代方案、来源。"
@@ -185,17 +185,17 @@ async def _build_final_answer(query: str, result: dict[str, Any]) -> str:
 
 
 @mcp.tool(
-    name="search_sales_wiki",
-    title="Search Sales Wiki",
+    name="search_llm_wiki",
+    title="Search LLM Wiki",
     description=(
-        "Search and answer from the read-only Obsidian sales/presales wiki. "
+        "Search and answer from the read-only Obsidian enterprise wiki. "
         "For final user responses, use the returned final_answer verbatim or nearly "
         "verbatim. Do not answer product knowledge questions from general model knowledge. "
         "The final_answer already includes citations."
     ),
     structured_output=True,
 )
-async def search_sales_wiki(
+async def search_llm_wiki(
     query: str,
     product: str | None = None,
     tags: list[str] | None = None,

@@ -1,6 +1,6 @@
-# Sales Wiki Admin Web
+# LLM Wiki Admin Web
 
-Internal management UI for the Sales Wiki RAG stack.
+Internal management UI for the LLM Wiki RAG stack.
 
 Features:
 

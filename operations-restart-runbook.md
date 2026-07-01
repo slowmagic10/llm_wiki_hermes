@@ -15,7 +15,7 @@
 - Admin Web: `http://192.168.121.20:18090`
 - RAG REST: `http://192.168.121.20:18080`
 - MCP Bridge: `http://127.0.0.1:18081/mcp`
-- Postgres/pgvector: `sales-wiki-postgres`
+- Postgres/pgvector: `llm-wiki-postgres`
 - LiteLLM: `http://127.0.0.1:14000/v1`
 - Hermes: Docker 容器 `hermes`
 
@@ -23,12 +23,12 @@
 
 | 组件 | 运行方式 | 作用 |
 | --- | --- | --- |
-| `sales-wiki-postgres` | `/root/llm_wiki_hermes/postgress/docker-compose.yml` | PostgreSQL + pgvector，存储文档、chunk、embedding、审计日志 |
+| `llm-wiki-postgres` | `/root/llm_wiki_hermes/postgress/docker-compose.yml` | PostgreSQL + pgvector，存储文档、chunk、embedding、审计日志 |
 | LiteLLM | 独立服务 | 本地模型 OpenAI-compatible API 入口 |
-| `sales-wiki-rag-api` | `/root/llm_wiki_hermes/docker-compose.yml` | RAG REST 服务，端口 `18080` |
-| `sales-wiki-mcp-bridge` | `/root/llm_wiki_hermes/docker-compose.yml` | MCP bridge，端口 `127.0.0.1:18081` |
-| `sales-wiki-admin-web` | `/root/llm_wiki_hermes/docker-compose.yml` | 管理后台，端口 `18090` |
-| `sales-wiki-sync-runner` | `/root/llm_wiki_hermes/docker-compose.yml` | 每天一次 `git pull` + 重新索引 |
+| `llm-wiki-rag-api` | `/root/llm_wiki_hermes/docker-compose.yml` | RAG REST 服务，端口 `18080` |
+| `llm-wiki-mcp-bridge` | `/root/llm_wiki_hermes/docker-compose.yml` | MCP bridge，端口 `127.0.0.1:18081` |
+| `llm-wiki-admin-web` | `/root/llm_wiki_hermes/docker-compose.yml` | 管理后台，端口 `18090` |
+| `llm-wiki-sync-runner` | `/root/llm_wiki_hermes/docker-compose.yml` | 每天一次 `git pull` + 重新索引 |
 | `hermes` | Docker 容器 | QQBot / Hermes 对话入口 |
 
 注意：
@@ -38,7 +38,7 @@
 - 开发和维护代码仍在宿主 `/root/llm_wiki_hermes`。
 - Vault、logs、bin、docs、SSH、obsidian-wiki 配置和 `config/model-settings.json` 通过 volume/bind mount 提供给容器。
 - RAG 侧 chat/rerank 模型在 Admin Web 的“模型配置”页面管理；Hermes 自身模型不在这里管理。
-- 旧 systemd 服务已停用，恢复时不要再启动 `obsidian-rag-mcp.service`、`obsidian-rag-mcp-bridge.service`、`sales-wiki-admin-web.service`、`sales-wiki-sync.timer`。
+- 旧 systemd 服务已停用，恢复时不要再启动 `obsidian-rag-mcp.service`、`obsidian-rag-mcp-bridge.service`、`llm-wiki-admin-web.service`、`llm-wiki-sync.timer`。
 
 ## 2. 服务器重启后快速检查
 
@@ -47,7 +47,7 @@
 ```bash
 cd /root/llm_wiki_hermes
 
-docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "sales-wiki|hermes|litellm" || true
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "llm-wiki|hermes|litellm" || true
 
 docker compose ps
 
@@ -57,11 +57,11 @@ docker compose ps
 
 正常应看到：
 
-- `sales-wiki-postgres` 为 `Up`，最好是 `healthy`
-- `sales-wiki-rag-api` 为 `Up`，最好是 `healthy`
-- `sales-wiki-admin-web` 为 `Up`，最好是 `healthy`
-- `sales-wiki-mcp-bridge` 为 `Up`
-- `sales-wiki-sync-runner` 为 `Up`
+- `llm-wiki-postgres` 为 `Up`，最好是 `healthy`
+- `llm-wiki-rag-api` 为 `Up`，最好是 `healthy`
+- `llm-wiki-admin-web` 为 `Up`，最好是 `healthy`
+- `llm-wiki-mcp-bridge` 为 `Up`
+- `llm-wiki-sync-runner` 为 `Up`
 - `hermes` 为 `Up`
 - LiteLLM 相关容器或进程已运行
 
@@ -101,8 +101,8 @@ docker compose ps
 检查数据库和 vector 扩展：
 
 ```bash
-docker exec -it sales-wiki-postgres psql -U rag -d rag -c "select 1;"
-docker exec -it sales-wiki-postgres psql -U rag -d rag -c "\dx"
+docker exec -it llm-wiki-postgres psql -U rag -d rag -c "select 1;"
+docker exec -it llm-wiki-postgres psql -U rag -d rag -c "\dx"
 ```
 
 `\dx` 结果里应包含 `vector`。
@@ -215,7 +215,7 @@ docker compose ps
 验证容器是否真的使用镜像内代码：
 
 ```bash
-docker exec sales-wiki-rag-api sh -lc 'pwd; python -c "import app,sys; print(app.__file__); print(sys.executable)"'
+docker exec llm-wiki-rag-api sh -lc 'pwd; python -c "import app,sys; print(app.__file__); print(sys.executable)"'
 ```
 
 正常应看到：
@@ -268,11 +268,11 @@ Gateway running
 
 ```bash
 git add .
-git commit -m "update sales wiki"
+git commit -m "update default wiki"
 git push
 ```
 
-服务器通常由 `sales-wiki-sync-runner` 每天自动同步一次。
+服务器通常由 `llm-wiki-sync-runner` 每天自动同步一次。
 
 如果想立刻生效：
 
@@ -291,20 +291,20 @@ Git Pull + 重新索引
 查看最近一次同步结果：
 
 ```bash
-cat /root/llm_wiki_hermes/logs/sales-wiki-sync-status.json
+cat /root/llm_wiki_hermes/logs/llm-wiki-sync-status.json
 curl --noproxy "*" http://127.0.0.1:18090/api/sync-status
 ```
 
 查看同步容器日志：
 
 ```bash
-docker logs --tail 120 sales-wiki-sync-runner
+docker logs --tail 120 llm-wiki-sync-runner
 ```
 
 同步脚本会保留最近 20 个日志文件：
 
 ```bash
-ls -lh /root/llm_wiki_hermes/logs/sales-wiki-sync-*.log
+ls -lh /root/llm_wiki_hermes/logs/llm-wiki-sync-*.log
 ```
 
 ## 5. 功能验证
@@ -377,7 +377,7 @@ obsidian-wiki setup --vault /root/llm_wiki_hermes/vault
 手动验证：
 
 ```bash
-docker exec sales-wiki-admin-web obsidian-wiki info
+docker exec llm-wiki-admin-web obsidian-wiki info
 ```
 
 应看到：
@@ -415,7 +415,7 @@ docker exec sales-wiki-admin-web obsidian-wiki info
 ```bash
 cd /root/llm_wiki_hermes
 docker compose ps admin-web
-docker logs --tail 120 sales-wiki-admin-web
+docker logs --tail 120 llm-wiki-admin-web
 ss -lntp | grep 18090 || true
 curl --noproxy "*" http://127.0.0.1:18090/health
 ```
@@ -434,8 +434,8 @@ docker compose restart admin-web
 查看日志：
 
 ```bash
-docker logs --tail 200 sales-wiki-rag-api
-docker logs --tail 120 sales-wiki-sync-runner
+docker logs --tail 200 llm-wiki-rag-api
+docker logs --tail 120 llm-wiki-sync-runner
 ```
 
 常见原因：
@@ -458,7 +458,7 @@ set +a
 curl --noproxy "*" http://127.0.0.1:14000/v1/models \
   -H "Authorization: Bearer $LITELLM_API_KEY"
 
-docker exec -it sales-wiki-postgres psql -U rag -d rag -c "select count(*) from documents; select count(*) from chunks;"
+docker exec -it llm-wiki-postgres psql -U rag -d rag -c "select count(*) from documents; select count(*) from chunks;"
 ```
 
 ### 6.3 `/wiki` 没有走正式 Wiki
@@ -466,14 +466,14 @@ docker exec -it sales-wiki-postgres psql -U rag -d rag -c "select count(*) from 
 检查 hook：
 
 ```bash
-ls -l /root/.hermes/hooks/sales_wiki_router
-sed -n '1,180p' /root/.hermes/hooks/sales_wiki_router/handler.py
+ls -l /root/.hermes/hooks/llm_wiki_router
+sed -n '1,180p' /root/.hermes/hooks/llm_wiki_router/handler.py
 ```
 
 检查 Hermes 是否加载 hook：
 
 ```bash
-tail -200 /root/.hermes/logs/gateway.log | grep -E "sales_wiki_router|hook\\(s\\) loaded|qqbot connected"
+tail -200 /root/.hermes/logs/gateway.log | grep -E "llm_wiki_router|hook\\(s\\) loaded|qqbot connected"
 ```
 
 重启 Hermes：
@@ -489,7 +489,7 @@ docker restart hermes
 检查配置：
 
 ```bash
-grep -n "system_prompt\|platform_toolsets\|sales_wiki" -C 3 /root/.hermes/config.yaml
+grep -n "system_prompt\|platform_toolsets\|llm_wiki" -C 3 /root/.hermes/config.yaml
 ```
 
 当前推荐状态：
@@ -526,14 +526,14 @@ docker restart hermes
 cd /root/llm_wiki_hermes/postgress
 docker compose up -d postgres
 docker compose ps
-docker logs --tail 120 sales-wiki-postgres
+docker logs --tail 120 llm-wiki-postgres
 ```
 
 确认数据库：
 
 ```bash
-docker exec -it sales-wiki-postgres psql -U rag -d rag -c "select 1;"
-docker exec -it sales-wiki-postgres psql -U rag -d rag -c "\dx"
+docker exec -it llm-wiki-postgres psql -U rag -d rag -c "select 1;"
+docker exec -it llm-wiki-postgres psql -U rag -d rag -c "\dx"
 ```
 
 ### 6.6 LiteLLM 没起来
@@ -597,17 +597,45 @@ docker compose build rag-api admin-web
 | `/root/llm_wiki_hermes/obsidian-wiki-config` | Admin 容器内 obsidian-wiki 持久配置 |
 | `/etc/obsidian-rag-mcp.env` | RAG/LiteLLM 环境变量和密钥 |
 | `/root/.hermes/config.yaml` | Hermes 配置 |
-| `/root/.hermes/hooks/sales_wiki_router` | QQBot `/wiki` 路由 hook |
+| `/root/.hermes/hooks/llm_wiki_router` | QQBot `/wiki` 路由 hook |
 | `/root/.hermes/logs/gateway.log` | Hermes 网关日志 |
 | `/root/llm_wiki_hermes/docs/wiki-frontmatter-schema.md` | Wiki frontmatter 规范 |
 
 ## 8. 备份和回滚
 
-修改 Hermes 配置前建议备份：
+运行时配置和数据库可以用脚本统一备份：
 
 ```bash
-cp /root/.hermes/config.yaml /root/.hermes/config.yaml.bak-$(date +%Y%m%d%H%M%S)
-cp /root/.hermes/state.db /root/.hermes/state.db.bak-$(date +%Y%m%d%H%M%S)
+/root/llm_wiki_hermes/bin/backup_runtime.sh
+```
+
+备份文件默认写入：
+
+```bash
+/root/llm_wiki_hermes/backups/runtime/
+```
+
+默认保留最近 14 个备份包。备份包权限为 `600`，因为其中包含 `/etc/obsidian-rag-mcp.env`、Hermes 配置和运行时模型配置。
+
+备份内容包括：
+
+- Postgres `rag` 数据库 dump：`postgres/rag.dump`
+- RAG/Admin/Hermes 运行配置：`project/config/`、`etc/obsidian-rag-mcp.env`
+- Hermes `config.yaml`、hooks、memories
+- 关键 Compose 文件和软件设计/恢复手册
+- `MANIFEST.txt`，记录项目 Git、Vault Git 和容器状态
+
+手动调整保留数量：
+
+```bash
+RETENTION_COUNT=30 /root/llm_wiki_hermes/bin/backup_runtime.sh
+```
+
+查看最新备份包内容：
+
+```bash
+cd /root/llm_wiki_hermes
+tar -tzf backups/runtime/$(ls -t backups/runtime | head -1) | head -80
 ```
 
 正式知识文件只通过 Git 管理：
@@ -621,8 +649,8 @@ git log --oneline -5
 如果需要回滚应用服务镜像或配置，优先使用 Git/Docker 镜像版本记录。当前本地镜像名：
 
 ```text
-sales-wiki-rag:local
-sales-wiki-admin-web:local
+llm-wiki-rag:local
+llm-wiki-admin-web:local
 ```
 
 不建议恢复到旧 systemd 部署，除非明确需要紧急回退。旧 systemd 服务当前应保持 disabled/inactive。
@@ -630,8 +658,8 @@ sales-wiki-admin-web:local
 检查旧 systemd 状态：
 
 ```bash
-systemctl is-enabled obsidian-rag-mcp.service obsidian-rag-mcp-bridge.service sales-wiki-admin-web.service sales-wiki-sync.timer || true
-systemctl is-active obsidian-rag-mcp.service obsidian-rag-mcp-bridge.service sales-wiki-admin-web.service sales-wiki-sync.timer || true
+systemctl is-enabled obsidian-rag-mcp.service obsidian-rag-mcp-bridge.service llm-wiki-admin-web.service llm-wiki-sync.timer || true
+systemctl is-active obsidian-rag-mcp.service obsidian-rag-mcp-bridge.service llm-wiki-admin-web.service llm-wiki-sync.timer || true
 ```
 
 ## 9. 最小恢复检查清单
@@ -645,13 +673,13 @@ docker compose up -d postgres
 cd /root/llm_wiki_hermes
 docker compose up -d
 
-docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "sales-wiki|hermes|litellm" || true
+docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "llm-wiki|hermes|litellm" || true
 
 curl --noproxy "*" http://127.0.0.1:18080/health
 curl --noproxy "*" http://127.0.0.1:18090/health
 curl --noproxy "*" http://127.0.0.1:18090/api/wiki-health
 
-cat /root/llm_wiki_hermes/logs/sales-wiki-sync-status.json
+cat /root/llm_wiki_hermes/logs/llm-wiki-sync-status.json
 ```
 
 全部正常后，在 QQBot 测：

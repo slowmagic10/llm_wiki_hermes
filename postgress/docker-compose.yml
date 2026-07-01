@@ -1,7 +1,7 @@
 services:
   postgres:
     image: harbor.cm.cluster:9443/docker.io/pgvector/pgvector:pg16
-    container_name: sales-wiki-postgres
+    container_name: llm-wiki-postgres
     environment:
       POSTGRES_DB: rag
       POSTGRES_USER: rag

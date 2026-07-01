@@ -8,11 +8,11 @@ project_root="/root/llm_wiki_hermes"
 vault_path="${project_root}/vault"
 rag_base_url="${RAG_BASE_URL:-http://127.0.0.1:18080}"
 log_dir="${project_root}/logs"
-status_file="${log_dir}/sales-wiki-sync-status.json"
-lock_file="/run/sales-wiki-sync.lock"
+status_file="${log_dir}/llm-wiki-sync-status.json"
+lock_file="/run/llm-wiki-sync.lock"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)"
-log_file="${log_dir}/sales-wiki-sync-${run_id}.log"
+log_file="${log_dir}/llm-wiki-sync-${run_id}.log"
 
 mkdir -p "${log_dir}"
 
@@ -75,7 +75,7 @@ cleanup() {
   else
     write_status "failed" "${rc}" "sync failed; see log_file"
   fi
-  find "${log_dir}" -maxdepth 1 -type f -name 'sales-wiki-sync-*.log' -printf '%T@ %p\n' | sort -nr | awk 'NR>20 {print $2}' | xargs -r rm -f
+  find "${log_dir}" -maxdepth 1 -type f -name 'llm-wiki-sync-*.log' -printf '%T@ %p\n' | sort -nr | awk 'NR>20 {print $2}' | xargs -r rm -f
   exit ${rc}
 }
 trap cleanup EXIT

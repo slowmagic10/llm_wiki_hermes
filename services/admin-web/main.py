@@ -26,7 +26,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://rag:rag@127.0.0.1:25432/r
 LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL", "http://127.0.0.1:14000/v1")
 LITELLM_API_KEY = os.getenv("LITELLM_API_KEY", "")
 SYNC_SCRIPT = Path(os.getenv("SYNC_SCRIPT", str(PROJECT_ROOT / "bin/sync_vault_and_rag.sh")))
-SYNC_STATUS_FILE = Path(os.getenv("SYNC_STATUS_FILE", str(PROJECT_ROOT / "logs/sales-wiki-sync-status.json")))
+SYNC_STATUS_FILE = Path(os.getenv("SYNC_STATUS_FILE", str(PROJECT_ROOT / "logs/llm-wiki-sync-status.json")))
 SCHEMA_DOC = PROJECT_ROOT / "docs" / "wiki-frontmatter-schema.md"
 MODEL_SETTINGS_PATH = Path(os.getenv("MODEL_SETTINGS_PATH", str(PROJECT_ROOT / "config/model-settings.json")))
 
@@ -1041,7 +1041,7 @@ async def status() -> dict[str, Any]:
     git_status = _run(["git", "status", "--short"], cwd=VAULT_PATH, timeout=10)
     services = {
         name: _run(["systemctl", "is-active", name], timeout=5)["stdout"].strip()
-        for name in ["obsidian-rag-mcp.service", "obsidian-rag-mcp-bridge.service", "sales-wiki-sync.timer"]
+        for name in ["obsidian-rag-mcp.service", "obsidian-rag-mcp-bridge.service", "llm-wiki-sync.timer"]
     }
     try:
         async with httpx.AsyncClient(timeout=5, trust_env=False) as client:

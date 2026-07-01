@@ -3,8 +3,8 @@ services:
     build:
       context: ./services/obsidian-rag-mcp
       network: host
-    image: sales-wiki-rag:local
-    container_name: sales-wiki-rag-api
+    image: llm-wiki-rag:local
+    container_name: llm-wiki-rag-api
     restart: unless-stopped
     env_file:
       - /etc/obsidian-rag-mcp.env
@@ -35,8 +35,8 @@ services:
       start_period: 20s
 
   mcp-bridge:
-    image: sales-wiki-rag:local
-    container_name: sales-wiki-mcp-bridge
+    image: llm-wiki-rag:local
+    container_name: llm-wiki-mcp-bridge
     restart: unless-stopped
     depends_on:
       rag-api:
@@ -67,8 +67,8 @@ services:
     build:
       context: ./services/admin-web
       network: host
-    image: sales-wiki-admin-web:local
-    container_name: sales-wiki-admin-web
+    image: llm-wiki-admin-web:local
+    container_name: llm-wiki-admin-web
     restart: unless-stopped
     depends_on:
       rag-api:
@@ -116,7 +116,7 @@ services:
 
   sync-runner:
     image: alpine/git:latest
-    container_name: sales-wiki-sync-runner
+    container_name: llm-wiki-sync-runner
     restart: unless-stopped
     entrypoint:
       - /bin/sh

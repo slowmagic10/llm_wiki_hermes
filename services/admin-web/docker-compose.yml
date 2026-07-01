@@ -1,7 +1,7 @@
 services:
   admin-web:
     build: .
-    container_name: sales-wiki-admin-web
+    container_name: llm-wiki-admin-web
     ports:
       - "18090:18090"
     environment:
