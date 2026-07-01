@@ -36,7 +36,8 @@
 - RAG、MCP bridge、Admin Web 已经改成自包含 Docker 镜像运行。
 - 服务代码在镜像内 `/app`，Python 依赖安装在镜像内。
 - 开发和维护代码仍在宿主 `/root/llm_wiki_hermes`。
-- Vault、logs、bin、docs、SSH、obsidian-wiki 配置通过 volume/bind mount 提供给容器。
+- Vault、logs、bin、docs、SSH、obsidian-wiki 配置和 `config/model-settings.json` 通过 volume/bind mount 提供给容器。
+- RAG 侧 chat/rerank 模型在 Admin Web 的“模型配置”页面管理；Hermes 自身模型不在这里管理。
 - 旧 systemd 服务已停用，恢复时不要再启动 `obsidian-rag-mcp.service`、`obsidian-rag-mcp-bridge.service`、`sales-wiki-admin-web.service`、`sales-wiki-sync.timer`。
 
 ## 2. 服务器重启后快速检查
@@ -134,9 +135,23 @@ curl --noproxy "*" http://127.0.0.1:14000/v1/models \
 
 应包含：
 
-- `Qwen3.6-35B-A3B-FP8`
+- `Qwen3.6-27B-FP8`
 - `Qwen3-Embedding-4B`
 - `Qwen3-Reranker-0.6B`
+
+当前 RAG 模型配置文件：
+
+```bash
+cat /root/llm_wiki_hermes/config/model-settings.json
+```
+
+通常应包含：
+
+- `chat_model`
+- `embedding_model`
+- `reranker_model`
+
+第一版 Admin Web 只开放保存 `chat_model` 和 `reranker_model`。`embedding_model` 只展示；切换 embedding 需要重新嵌入全部文档后再开放。
 
 ### 3.3 恢复 Docker 防火墙临时规则
 

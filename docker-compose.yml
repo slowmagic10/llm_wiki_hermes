@@ -12,10 +12,12 @@ services:
       VAULT_PATH: /root/llm_wiki_hermes/vault
       DATABASE_URL: postgresql://rag:rag@postgres:5432/rag
       LITELLM_BASE_URL: http://172.19.0.1:14000/v1
+      MODEL_SETTINGS_PATH: /root/llm_wiki_hermes/config/model-settings.json
       NO_PROXY: "*"
       no_proxy: "*"
     volumes:
       - /root/llm_wiki_hermes/vault:/root/llm_wiki_hermes/vault:ro
+      - /root/llm_wiki_hermes/config:/root/llm_wiki_hermes/config:ro
     ports:
       - "18080:18080"
     networks:
@@ -45,10 +47,12 @@ services:
       VAULT_PATH: /root/llm_wiki_hermes/vault
       DATABASE_URL: postgresql://rag:rag@postgres:5432/rag
       LITELLM_BASE_URL: http://172.19.0.1:14000/v1
+      MODEL_SETTINGS_PATH: /root/llm_wiki_hermes/config/model-settings.json
       NO_PROXY: "*"
       no_proxy: "*"
     volumes:
       - /root/llm_wiki_hermes/vault:/root/llm_wiki_hermes/vault:ro
+      - /root/llm_wiki_hermes/config:/root/llm_wiki_hermes/config:ro
     ports:
       - "127.0.0.1:18081:18081"
     networks:
@@ -76,6 +80,8 @@ services:
       VAULT_PATH: /root/llm_wiki_hermes/vault
       RAG_BASE_URL: http://rag-api:18080
       DATABASE_URL: postgresql://rag:rag@postgres:5432/rag
+      LITELLM_BASE_URL: http://172.19.0.1:14000/v1
+      MODEL_SETTINGS_PATH: /root/llm_wiki_hermes/config/model-settings.json
       SYNC_SCRIPT: /root/llm_wiki_hermes/bin/sync_vault_and_rag_container.sh
       SERVICE_MODE: docker
       NO_PROXY: "*"
@@ -83,6 +89,7 @@ services:
     volumes:
       - /root/llm_wiki_hermes/vault:/root/llm_wiki_hermes/vault
       - /root/llm_wiki_hermes/logs:/root/llm_wiki_hermes/logs
+      - /root/llm_wiki_hermes/config:/root/llm_wiki_hermes/config
       - /root/llm_wiki_hermes/bin:/root/llm_wiki_hermes/bin:ro
       - /root/llm_wiki_hermes/docs:/root/llm_wiki_hermes/docs:ro
       - /root/llm_wiki_hermes/obsidian-wiki-config:/root/.obsidian-wiki

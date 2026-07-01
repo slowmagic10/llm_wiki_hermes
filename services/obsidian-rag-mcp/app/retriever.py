@@ -8,6 +8,9 @@ from app.db import get_conn, vector_literal
 from app.models_client import embed_text, rerank
 
 
+RERANK_ONLY_ANSWERABLE_THRESHOLD = 0.85
+
+
 async def search(query: str, product: str | None = None, tags: list[str] | None = None) -> dict[str, Any]:
     query_embedding = await embed_text(query)
     candidates = _collect_candidates(query, query_embedding, product, tags or [])
@@ -31,7 +34,8 @@ async def search(query: str, product: str | None = None, tags: list[str] | None 
     )
     top = ranked[: settings.rerank_top_k]
     confidence = float(top[0]["final_score"]) if top else 0.0
-    answerable = bool(top and confidence >= settings.answerable_threshold)
+    has_supported_evidence = bool(top and _has_supported_evidence(top[0]))
+    answerable = bool(top and confidence >= settings.answerable_threshold and has_supported_evidence)
 
     citations = [
         {"path": item["path"], "heading": " > ".join(item["heading_path"]), "score": item["final_score"]}
@@ -39,13 +43,21 @@ async def search(query: str, product: str | None = None, tags: list[str] | None 
     ]
 
     if not answerable:
-        _record_gap(query, "rerank 分数低于可回答阈值")
+        if top and confidence >= settings.answerable_threshold and not has_supported_evidence:
+            reason = "no_supported_evidence"
+            gap_reason = "没有足够的词面或强语义证据支持回答"
+        else:
+            reason = "low_confidence"
+            gap_reason = "rerank 分数低于可回答阈值"
+        _record_gap(query, gap_reason)
+    else:
+        reason = "found_reliable_sources"
     _record_audit(query, answerable, confidence, citations)
 
     return {
         "answerable": answerable,
         "confidence": confidence,
-        "reason": "found_reliable_sources" if answerable else "low_confidence",
+        "reason": reason,
         "citations": citations if answerable else [],
         "chunks": top if answerable else [],
     }
@@ -186,6 +198,14 @@ def _lexical_score(item: dict[str, Any], query: str) -> float:
         if clean and clean in query_norm:
             return 0.95
     return 0.0
+
+
+def _has_supported_evidence(item: dict[str, Any]) -> bool:
+    if float(item.get("lexical_score") or 0.0) > 0.0:
+        return True
+    if float(item.get("rerank_score") or 0.0) >= RERANK_ONLY_ANSWERABLE_THRESHOLD:
+        return True
+    return False
 
 
 def _rule_score(item: dict[str, Any], query: str, tags: list[str]) -> float:

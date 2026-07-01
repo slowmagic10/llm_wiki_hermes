@@ -1,0 +1,6 @@
+{
+  "chat_model": "Qwen3.6-27B-FP8",
+  "embedding_model": "Qwen3-Embedding-4B",
+  "reranker_model": "Qwen3-Reranker-0.6B",
+  "updated_at": "2026-07-01T06:13:10.516830+00:00"
+}

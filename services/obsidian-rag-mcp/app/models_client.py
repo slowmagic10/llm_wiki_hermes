@@ -1,6 +1,6 @@
 import httpx
 
-from app.config import settings
+from app.config import model_setting, settings
 
 
 def _headers() -> dict[str, str]:
@@ -15,7 +15,7 @@ async def embed_text(text: str) -> list[float]:
         response = await client.post(
             f"{settings.litellm_base_url.rstrip('/')}/embeddings",
             headers=_headers(),
-            json={"model": settings.embedding_model, "input": text},
+            json={"model": model_setting("embedding_model"), "input": text},
         )
         response.raise_for_status()
         payload = response.json()
@@ -29,7 +29,7 @@ async def rerank(query: str, documents: list[str]) -> list[float]:
         response = await client.post(
             f"{settings.litellm_base_url.rstrip('/')}/rerank",
             headers=_headers(),
-            json={"model": settings.reranker_model, "query": query, "documents": documents},
+            json={"model": model_setting("reranker_model"), "query": query, "documents": documents},
         )
         response.raise_for_status()
         payload = response.json()
@@ -47,7 +47,7 @@ async def chat_complete(messages: list[dict[str, str]], max_tokens: int = 900) -
             f"{settings.litellm_base_url.rstrip('/')}/chat/completions",
             headers=_headers(),
             json={
-                "model": settings.chat_model,
+                "model": model_setting("chat_model"),
                 "messages": messages,
                 "temperature": 0.0,
                 "max_tokens": max_tokens,
