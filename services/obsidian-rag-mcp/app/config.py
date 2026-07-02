@@ -27,6 +27,9 @@ class Settings:
     search_fts_top_k = _int_env("SEARCH_FTS_TOP_K", 30)
     rerank_top_k = _int_env("RERANK_TOP_K", 8)
     answerable_threshold = _float_env("ANSWERABLE_THRESHOLD", 0.5)
+    vector_backend = os.getenv("VECTOR_BACKEND", "pgvector").lower()
+    milvus_uri = os.getenv("MILVUS_URI", "http://127.0.0.1:19530")
+    milvus_collection = os.getenv("MILVUS_COLLECTION", "llm_wiki_chunks")
 
 
 settings = Settings()

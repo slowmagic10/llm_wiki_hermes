@@ -13,6 +13,9 @@ services:
       DATABASE_URL: postgresql://rag:rag@postgres:5432/rag
       LITELLM_BASE_URL: http://172.19.0.1:14000/v1
       MODEL_SETTINGS_PATH: /root/llm_wiki_hermes/config/model-settings.json
+      VECTOR_BACKEND: milvus
+      MILVUS_URI: http://milvus:19530
+      MILVUS_COLLECTION: llm_wiki_chunks_v2
       NO_PROXY: "*"
       no_proxy: "*"
     volumes:
@@ -23,6 +26,9 @@ services:
     networks:
       - default
       - postgres_net
+    depends_on:
+      milvus:
+        condition: service_started
     healthcheck:
       test:
         - CMD
@@ -48,6 +54,9 @@ services:
       DATABASE_URL: postgresql://rag:rag@postgres:5432/rag
       LITELLM_BASE_URL: http://172.19.0.1:14000/v1
       MODEL_SETTINGS_PATH: /root/llm_wiki_hermes/config/model-settings.json
+      VECTOR_BACKEND: milvus
+      MILVUS_URI: http://milvus:19530
+      MILVUS_COLLECTION: llm_wiki_chunks_v2
       NO_PROXY: "*"
       no_proxy: "*"
     volumes:
@@ -84,6 +93,9 @@ services:
       MODEL_SETTINGS_PATH: /root/llm_wiki_hermes/config/model-settings.json
       SYNC_SCRIPT: /root/llm_wiki_hermes/bin/sync_vault_and_rag_container.sh
       SERVICE_MODE: docker
+      VECTOR_BACKEND: milvus
+      MILVUS_URI: http://milvus:19530
+      MILVUS_COLLECTION: llm_wiki_chunks_v2
       NO_PROXY: "*"
       no_proxy: "*"
     volumes:
@@ -137,7 +149,71 @@ services:
     networks:
       - default
 
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    container_name: llm-wiki-milvus-etcd
+    restart: unless-stopped
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    volumes:
+      - milvus_etcd_data:/etcd
+    command:
+      - etcd
+      - --advertise-client-urls=http://127.0.0.1:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --data-dir=/etcd
+    networks:
+      - default
+
+  minio:
+    image: harbor.cm.cluster:9443/docker.io/minio/minio:RELEASE.2024-12-18T13-15-44Z
+    container_name: llm-wiki-milvus-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - milvus_minio_data:/minio_data
+    command:
+      - minio
+      - server
+      - /minio_data
+      - --console-address
+      - ":9001"
+    networks:
+      - default
+
+  milvus:
+    image: harbor.cm.cluster:9443/docker.io/milvusdb/milvus:v2.4.15
+    container_name: llm-wiki-milvus
+    restart: unless-stopped
+    command:
+      - milvus
+      - run
+      - standalone
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "127.0.0.1:19530:19530"
+      - "127.0.0.1:9091:9091"
+    depends_on:
+      - etcd
+      - minio
+    networks:
+      - default
+
 networks:
   postgres_net:
     external: true
     name: postgress_default
+
+volumes:
+  milvus_etcd_data:
+  milvus_minio_data:
+  milvus_data:

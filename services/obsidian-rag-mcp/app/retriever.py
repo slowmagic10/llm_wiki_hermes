@@ -6,6 +6,7 @@ from psycopg2.extras import RealDictCursor, Json
 from app.config import settings
 from app.db import get_conn, vector_literal
 from app.models_client import embed_text, rerank
+from app.vector_store import milvus_enabled, search_vectors
 
 
 RERANK_ONLY_ANSWERABLE_THRESHOLD = 0.85
@@ -104,6 +105,50 @@ def _fts_candidates(query: str, product: str | None, tags: list[str]) -> list[di
 
 
 def _vector_candidates(query_embedding: list[float], product: str | None, tags: list[str]) -> list[dict[str, Any]]:
+    if milvus_enabled():
+        try:
+            return _milvus_vector_candidates(query_embedding, product, tags)
+        except Exception:
+            return _pgvector_candidates(query_embedding, product, tags)
+    return _pgvector_candidates(query_embedding, product, tags)
+
+
+def _milvus_vector_candidates(query_embedding: list[float], product: str | None, tags: list[str]) -> list[dict[str, Any]]:
+    hits = search_vectors(query_embedding, settings.search_vector_top_k * 3 if (product or tags) else settings.search_vector_top_k)
+    if not hits:
+        return []
+
+    scores = {hit["id"]: float(hit.get("vector_score") or 0.0) for hit in hits}
+    ids = list(scores.keys())
+    where, params = _metadata_filter(product, tags)
+    sql = f"""
+        select c.id::text as id, c.path, c.heading_path, c.text, c.metadata,
+               0.0 as fts_score,
+               0.0 as vector_score
+        from chunks c
+        join documents d on d.id = c.document_id
+        where c.id = any(%s::uuid[])
+        {where}
+        limit %s
+    """
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, (ids, *params, settings.search_vector_top_k))
+            rows = list(cur.fetchall())
+    by_id = {row["id"]: row for row in rows}
+    ranked: list[dict[str, Any]] = []
+    for chunk_id in ids:
+        row = by_id.get(chunk_id)
+        if not row:
+            continue
+        row["vector_score"] = scores.get(chunk_id, 0.0)
+        ranked.append(row)
+        if len(ranked) >= settings.search_vector_top_k:
+            break
+    return ranked
+
+
+def _pgvector_candidates(query_embedding: list[float], product: str | None, tags: list[str]) -> list[dict[str, Any]]:
     where, params = _metadata_filter(product, tags)
     sql = f"""
         select c.id::text as id, c.path, c.heading_path, c.text, c.metadata,

@@ -1,6 +1,6 @@
 # LLM Wiki + Hermes 恢复操作手册
 
-更新时间：2026-07-01
+更新时间：2026-07-02
 
 本文档用于服务器重启、Docker 服务异常退出、手动升级镜像、或需要恢复整套 LLM Wiki + Hermes 服务时使用。
 
@@ -15,7 +15,8 @@
 - Admin Web: `http://192.168.121.20:18090`
 - RAG REST: `http://192.168.121.20:18080`
 - MCP Bridge: `http://127.0.0.1:18081/mcp`
-- Postgres/pgvector: `llm-wiki-postgres`
+- Postgres: `llm-wiki-postgres`
+- Milvus: `llm-wiki-milvus`
 - LiteLLM: `http://127.0.0.1:14000/v1`
 - Hermes: Docker 容器 `hermes`
 
@@ -23,7 +24,10 @@
 
 | 组件 | 运行方式 | 作用 |
 | --- | --- | --- |
-| `llm-wiki-postgres` | `/root/llm_wiki_hermes/postgress/docker-compose.yml` | PostgreSQL + pgvector，存储文档、chunk、embedding、审计日志 |
+| `llm-wiki-postgres` | `/root/llm_wiki_hermes/postgress/docker-compose.yml` | PostgreSQL，存储文档、chunk 正文/metadata、索引状态、FTS、知识缺口和审计日志 |
+| `llm-wiki-milvus` | `/root/llm_wiki_hermes/docker-compose.yml` | Milvus standalone，正式向量检索后端，当前 collection 为 `llm_wiki_chunks_v2` |
+| `llm-wiki-milvus-etcd` | `/root/llm_wiki_hermes/docker-compose.yml` | Milvus 元数据依赖 |
+| `llm-wiki-milvus-minio` | `/root/llm_wiki_hermes/docker-compose.yml` | Milvus 对象存储依赖 |
 | LiteLLM | 独立服务 | 本地模型 OpenAI-compatible API 入口 |
 | `llm-wiki-rag-api` | `/root/llm_wiki_hermes/docker-compose.yml` | RAG REST 服务，端口 `18080` |
 | `llm-wiki-mcp-bridge` | `/root/llm_wiki_hermes/docker-compose.yml` | MCP bridge，端口 `127.0.0.1:18081` |
@@ -37,6 +41,8 @@
 - 服务代码在镜像内 `/app`，Python 依赖安装在镜像内。
 - 开发和维护代码仍在宿主 `/root/llm_wiki_hermes`。
 - Vault、logs、bin、docs、SSH、obsidian-wiki 配置和 `config/model-settings.json` 通过 volume/bind mount 提供给容器。
+- 当前 RAG 向量后端为 Milvus：`VECTOR_BACKEND=milvus`，`MILVUS_COLLECTION=llm_wiki_chunks_v2`。
+- Postgres 仍保留 `pgvector` 扩展作为兼容和 fallback，但正常检索优先走 Milvus。
 - RAG 侧 chat/rerank 模型在 Admin Web 的“模型配置”页面管理；Hermes 自身模型不在这里管理。
 - 旧 systemd 服务已停用，恢复时不要再启动 `obsidian-rag-mcp.service`、`obsidian-rag-mcp-bridge.service`、`llm-wiki-admin-web.service`、`llm-wiki-sync.timer`。
 
@@ -58,6 +64,9 @@ docker compose ps
 正常应看到：
 
 - `llm-wiki-postgres` 为 `Up`，最好是 `healthy`
+- `llm-wiki-milvus` 为 `Up`
+- `llm-wiki-milvus-etcd` 为 `Up`
+- `llm-wiki-milvus-minio` 为 `Up`
 - `llm-wiki-rag-api` 为 `Up`，最好是 `healthy`
 - `llm-wiki-admin-web` 为 `Up`，最好是 `healthy`
 - `llm-wiki-mcp-bridge` 为 `Up`
@@ -70,7 +79,22 @@ docker compose ps
 ```bash
 curl --noproxy "*" http://127.0.0.1:18080/health
 curl --noproxy "*" http://127.0.0.1:18090/health
+curl --noproxy "*" http://127.0.0.1:18090/api/health-detail
 curl --noproxy "*" http://127.0.0.1:18090/api/wiki-health
+```
+
+`18080/health` 正常应包含：
+
+```json
+{
+  "ok": true,
+  "vector_backend": "milvus",
+  "milvus": {
+    "ok": true,
+    "collection": "llm_wiki_chunks_v2",
+    "exists": true
+  }
+}
 ```
 
 检查 LiteLLM 模型接口：
@@ -189,12 +213,20 @@ iptables -S INPUT | head -20
 - 第二条用于应用容器通过 Docker bridge 访问宿主 LiteLLM `14000`。
 - 当前规则是临时规则，后续应持久化到 Shorewall、iptables-persistent 或 systemd oneshot。
 
-### 3.4 启动 RAG / MCP / Admin / Sync
+### 3.4 启动 Milvus / RAG / MCP / Admin / Sync
 
 ```bash
 cd /root/llm_wiki_hermes
 docker compose up -d
 docker compose ps
+```
+
+如果只需要单独启动 Milvus 相关服务：
+
+```bash
+cd /root/llm_wiki_hermes
+docker compose up -d etcd minio milvus
+docker compose ps etcd minio milvus
 ```
 
 如果刚更新过代码或 Dockerfile，先 build：
@@ -224,6 +256,94 @@ docker exec llm-wiki-rag-api sh -lc 'pwd; python -c "import app,sys; print(app._
 /app
 /app/app/__init__.py
 /usr/local/bin/python
+```
+
+检查 Milvus collection：
+
+```bash
+curl --noproxy "*" http://127.0.0.1:18080/health
+```
+
+当前正常状态：
+
+- `vector_backend` 为 `milvus`
+- `milvus.collection` 为 `llm_wiki_chunks_v2`
+- `milvus.exists` 为 `true`
+- `milvus.entities` 应与 Postgres `chunks` 数量一致
+
+检查 Postgres chunk 数量：
+
+```bash
+docker exec -i llm-wiki-postgres psql -U rag -d rag -c "select count(*) as chunks from chunks;"
+```
+
+如果 Milvus collection 丢失或实体数明显不一致，可以用 Postgres 中已有 embedding 重建 Milvus，不需要重新调用 embedding 模型：
+
+```bash
+docker exec -w /app -e PYTHONPATH=/app -i llm-wiki-rag-api python - <<'PY'
+import math
+from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connections, utility
+from app.config import settings
+from app.db import get_conn
+
+def parse_vector(value):
+    text = str(value).strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    return [float(item) for item in text.split(",") if item]
+
+def normalize(values):
+    norm = math.sqrt(sum(item * item for item in values))
+    return values if norm <= 0 else [item / norm for item in values]
+
+with get_conn() as conn:
+    with conn.cursor() as cur:
+        cur.execute("select id::text, path, embedding from chunks order by path, id")
+        rows = cur.fetchall()
+
+ids, paths, embeddings = [], [], []
+for chunk_id, path, embedding in rows:
+    ids.append(chunk_id)
+    paths.append(path)
+    embeddings.append(normalize(parse_vector(embedding)))
+
+dim = len(embeddings[0])
+connections.connect(alias="default", uri=settings.milvus_uri)
+if utility.has_collection(settings.milvus_collection):
+    utility.drop_collection(settings.milvus_collection)
+
+schema = CollectionSchema([
+    FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=64),
+    FieldSchema(name="path", dtype=DataType.VARCHAR, max_length=1024),
+    FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dim),
+], description="LLM Wiki chunk embeddings")
+
+collection = Collection(settings.milvus_collection, schema=schema)
+collection.create_index(
+    field_name="embedding",
+    index_params={
+        "index_type": "HNSW",
+        "metric_type": "IP",
+        "params": {"M": 16, "efConstruction": 200},
+    },
+)
+collection.insert([ids, paths, embeddings])
+collection.flush()
+collection.load()
+print({
+    "collection": settings.milvus_collection,
+    "dim": dim,
+    "postgres_chunks": len(rows),
+    "milvus_entities": collection.num_entities,
+})
+PY
+```
+
+重建后再检查：
+
+```bash
+curl --noproxy "*" http://127.0.0.1:18080/health
+curl --noproxy "*" http://127.0.0.1:18090/api/health-detail
 ```
 
 ### 3.5 启动 Hermes

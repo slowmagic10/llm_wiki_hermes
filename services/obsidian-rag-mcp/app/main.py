@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from app.db import ping_db
 from app.indexer import run_sync
 from app.retriever import search
+from app.vector_store import milvus_enabled, ping_milvus, vector_backend_name
 
 
 class SearchRequest(BaseModel):
@@ -19,7 +20,13 @@ app = FastAPI(title="Obsidian RAG MCP", version="0.1.0")
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "db": ping_db()}
+    result: dict[str, Any] = {"ok": True, "db": ping_db(), "vector_backend": vector_backend_name()}
+    if milvus_enabled():
+        try:
+            result["milvus"] = {"ok": True, **ping_milvus()}
+        except Exception as exc:
+            result["milvus"] = {"ok": False, "error": str(exc)}
+    return result
 
 
 @app.post("/admin/sync/run")

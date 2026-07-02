@@ -7,6 +7,7 @@ from app.config import settings
 from app.db import get_conn, vector_literal
 from app.models_client import embed_text
 from app.parser import ParsedDocument, parse_markdown
+from app.vector_store import delete_by_path, upsert_chunk
 
 
 async def run_sync() -> dict[str, Any]:
@@ -88,6 +89,7 @@ async def _index_document(parsed: ParsedDocument, mtime: float) -> None:
             )
             document_id = cur.fetchone()[0]
             cur.execute("delete from chunks where document_id = %s", (document_id,))
+    delete_by_path(parsed.path)
 
     for chunk in parsed.chunks:
         embedding = await embed_text(_embedding_input(parsed.title, chunk.heading_path, chunk.text))
@@ -104,6 +106,7 @@ async def _index_document(parsed: ParsedDocument, mtime: float) -> None:
                       to_tsvector('simple', %s),
                       %s
                     )
+                    returning id
                     """,
                     (
                         document_id,
@@ -130,6 +133,8 @@ async def _index_document(parsed: ParsedDocument, mtime: float) -> None:
                         }),
                     ),
                 )
+                chunk_id = str(cur.fetchone()[0])
+        upsert_chunk(chunk_id, parsed.path, embedding)
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -188,6 +193,7 @@ def _delete_missing_files(seen_paths: set[str]) -> int:
             for path in missing:
                 cur.execute("delete from documents where path = %s", (path,))
                 cur.execute("delete from indexed_files where path = %s", (path,))
+                delete_by_path(path)
             return len(missing)
 
 

@@ -1343,6 +1343,28 @@ async def health_detail() -> dict[str, Any]:
         body = response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text
         ok = response.status_code < 400 and bool(body.get("ok", True) if isinstance(body, dict) else True)
         checks.append(_health_item("rag_api", ok, message=f"HTTP {response.status_code}", details=body))
+        if isinstance(body, dict):
+            vector_backend = body.get("vector_backend") or "unknown"
+            milvus = body.get("milvus") or {}
+            if vector_backend == "milvus":
+                milvus_ok = bool(milvus.get("ok"))
+                checks.append(_health_item(
+                    "milvus",
+                    milvus_ok,
+                    message=(
+                        f"collection={milvus.get('collection')}, entities={milvus.get('entities')}"
+                        if milvus_ok else str(milvus.get("error") or "Milvus 检查失败")
+                    ),
+                    details=milvus,
+                ))
+            else:
+                checks.append(_health_item(
+                    "milvus",
+                    False,
+                    status="warning",
+                    message=f"未启用 Milvus，当前后端: {vector_backend}",
+                    details=body,
+                ))
     except Exception as exc:
         checks.append(_health_item("rag_api", False, message=str(exc), details={"base_url": RAG_BASE_URL}))
 
