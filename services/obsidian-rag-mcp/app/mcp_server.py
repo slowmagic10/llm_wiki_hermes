@@ -2,6 +2,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from app.config import settings
 from app.models_client import chat_complete
 from app.retriever import _record_gap, search
 
@@ -108,9 +109,9 @@ def _fallback_answer(result: dict[str, Any]) -> str:
                     return text
         return "未在正式 Wiki 中找到明确依据。"
 
-    conclusion = section_text("一句话结论", "结论")
-    scenarios = section_text("适用场景")
-    notes = section_text("限制条件", "注意事项", "兼容性", "售前确认点")
+    conclusion = section_text("一句话结论", "结论", "型号对应")
+    scenarios = section_text("适用场景", "常用搭配", "推荐搭配", "使用场景", "型号对应")
+    notes = section_text("限制条件", "注意事项", "兼容性", "售前确认点", "风险")
     alternatives = section_text("替代方案")
 
     lines = [
@@ -136,6 +137,8 @@ def _fallback_answer(result: dict[str, Any]) -> str:
 async def _build_final_answer(query: str, result: dict[str, Any]) -> str:
     if not result.get("answerable"):
         return _not_answerable_message()
+    if settings.final_answer_mode != "llm":
+        return _fallback_answer(result)
 
     sources = _source_block(result)
     source_lines = "\n".join(_source_lines(result)[:4])

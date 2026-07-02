@@ -16,6 +16,7 @@ services:
       VECTOR_BACKEND: milvus
       MILVUS_URI: http://milvus:19530
       MILVUS_COLLECTION: llm_wiki_chunks_v2
+      FINAL_ANSWER_MODE: deterministic
       NO_PROXY: "*"
       no_proxy: "*"
     volumes:
@@ -57,6 +58,7 @@ services:
       VECTOR_BACKEND: milvus
       MILVUS_URI: http://milvus:19530
       MILVUS_COLLECTION: llm_wiki_chunks_v2
+      FINAL_ANSWER_MODE: deterministic
       NO_PROXY: "*"
       no_proxy: "*"
     volumes:
@@ -96,6 +98,7 @@ services:
       VECTOR_BACKEND: milvus
       MILVUS_URI: http://milvus:19530
       MILVUS_COLLECTION: llm_wiki_chunks_v2
+      FINAL_ANSWER_MODE: deterministic
       NO_PROXY: "*"
       no_proxy: "*"
     volumes:

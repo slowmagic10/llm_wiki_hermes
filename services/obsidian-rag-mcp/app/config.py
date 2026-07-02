@@ -21,6 +21,7 @@ class Settings:
     chat_model = os.getenv("CHAT_MODEL", "Qwen3.6-27B-FP8")
     embedding_model = os.getenv("EMBEDDING_MODEL", "Qwen3-Embedding-4B")
     reranker_model = os.getenv("RERANKER_MODEL", "Qwen3-Reranker-0.6B")
+    final_answer_mode = os.getenv("FINAL_ANSWER_MODE", "deterministic").lower()
     chunk_max_chars = _int_env("CHUNK_MAX_CHARS", 1200)
     chunk_overlap_chars = _int_env("CHUNK_OVERLAP_CHARS", 120)
     search_vector_top_k = _int_env("SEARCH_VECTOR_TOP_K", 30)
