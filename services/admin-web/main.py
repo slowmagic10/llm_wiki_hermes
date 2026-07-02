@@ -29,6 +29,7 @@ SYNC_SCRIPT = Path(os.getenv("SYNC_SCRIPT", str(PROJECT_ROOT / "bin/sync_vault_a
 SYNC_STATUS_FILE = Path(os.getenv("SYNC_STATUS_FILE", str(PROJECT_ROOT / "logs/llm-wiki-sync-status.json")))
 SCHEMA_DOC = PROJECT_ROOT / "docs" / "wiki-frontmatter-schema.md"
 MODEL_SETTINGS_PATH = Path(os.getenv("MODEL_SETTINGS_PATH", str(PROJECT_ROOT / "config/model-settings.json")))
+DOMAIN_REGISTRY_PATH = Path(os.getenv("DOMAIN_REGISTRY_PATH", str(PROJECT_ROOT / "config/domains.yml")))
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]")
@@ -163,6 +164,151 @@ def _write_model_settings(values: dict[str, str]) -> dict[str, Any]:
     }
     MODEL_SETTINGS_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return payload
+
+
+def _default_domain_registry() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "default_domain": "default",
+        "vault_layout": {
+            "mode": "legacy_root",
+            "target_root": "domains",
+            "migration": "manual",
+        },
+        "domains": {
+            "default": {
+                "display_name": "默认知识库",
+                "description": "当前单领域正式 Wiki；第一版不迁移 Vault 目录。",
+                "profile": "product",
+                "vault_subpath": ".",
+                "target_vault_subpath": "domains/default",
+                "isolation_mode": "legacy_root",
+                "rag_base_url": RAG_BASE_URL,
+                "sync_status_file": str(SYNC_STATUS_FILE),
+                "vector_backend": os.getenv("VECTOR_BACKEND", "milvus"),
+                "vector_collection": os.getenv("MILVUS_COLLECTION", "llm_wiki_chunks_v2"),
+                "entrypoint": "/wiki",
+                "enabled": True,
+            }
+        },
+    }
+
+
+def _read_domain_registry() -> dict[str, Any]:
+    source = "file"
+    if DOMAIN_REGISTRY_PATH.exists():
+        raw = yaml.safe_load(DOMAIN_REGISTRY_PATH.read_text(encoding="utf-8")) or {}
+    else:
+        raw = _default_domain_registry()
+        source = "default"
+    if not isinstance(raw, dict):
+        raw = {}
+    domains = raw.get("domains")
+    if not isinstance(domains, dict):
+        domains = {}
+    normalized: dict[str, Any] = {
+        "version": raw.get("version", 1),
+        "default_domain": str(raw.get("default_domain") or "default"),
+        "vault_layout": raw.get("vault_layout") if isinstance(raw.get("vault_layout"), dict) else {},
+        "registry_path": str(DOMAIN_REGISTRY_PATH),
+        "source": source,
+        "domains": domains,
+        "notes": raw.get("notes", []),
+    }
+    return normalized
+
+
+def _validate_domain_registry(registry: dict[str, Any]) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    domains = registry.get("domains") or {}
+    if not domains:
+        issues.append({"severity": "error", "domain": "-", "code": "empty_domains", "message": "domains 不能为空"})
+        return issues
+    default_domain = str(registry.get("default_domain") or "")
+    if default_domain and default_domain not in domains:
+        issues.append({"severity": "error", "domain": default_domain, "code": "missing_default_domain", "message": "default_domain 未在 domains 中定义"})
+    required = ("display_name", "profile", "vault_subpath", "rag_base_url", "sync_status_file", "enabled")
+    for domain_id, config in domains.items():
+        if not isinstance(config, dict):
+            issues.append({"severity": "error", "domain": str(domain_id), "code": "invalid_domain_config", "message": "领域配置必须是对象"})
+            continue
+        for key in required:
+            if key not in config:
+                issues.append({"severity": "warning", "domain": str(domain_id), "code": "missing_field", "message": f"缺少字段: {key}"})
+        subpath = str(config.get("vault_subpath") or "")
+        if subpath.startswith("/") or ".." in Path(subpath).parts:
+            issues.append({"severity": "error", "domain": str(domain_id), "code": "invalid_vault_subpath", "message": f"vault_subpath 不安全: {subpath}"})
+        target_subpath = str(config.get("target_vault_subpath") or "")
+        if target_subpath and (target_subpath.startswith("/") or ".." in Path(target_subpath).parts):
+            issues.append({"severity": "error", "domain": str(domain_id), "code": "invalid_target_vault_subpath", "message": f"target_vault_subpath 不安全: {target_subpath}"})
+    return issues
+
+
+def _domain_path_status(subpath: str) -> dict[str, Any]:
+    rel = subpath or "."
+    if rel.startswith("/") or ".." in Path(rel).parts:
+        return {"safe": False, "exists": False, "markdown_files": 0, "path": rel}
+    target = (VAULT_PATH / rel).resolve()
+    if not str(target).startswith(str(VAULT_PATH)):
+        return {"safe": False, "exists": False, "markdown_files": 0, "path": rel}
+    exists = target.exists() and target.is_dir()
+    markdown_files = len(list(target.rglob("*.md"))) if exists else 0
+    return {
+        "safe": True,
+        "exists": exists,
+        "markdown_files": markdown_files,
+        "path": rel,
+        "absolute_path": str(target),
+    }
+
+
+def _domain_indexed_count(subpath: str) -> int | None:
+    rel = subpath or "."
+    try:
+        if rel == ".":
+            row = _fetch_one("select count(*) as count from indexed_files")
+        else:
+            prefix = rel.rstrip("/") + "/"
+            row = _fetch_one("select count(*) as count from indexed_files where path = %s or path like %s", (rel, prefix + "%"))
+        return int(row.get("count") or 0)
+    except Exception:
+        return None
+
+
+def _domain_registry_status() -> dict[str, Any]:
+    registry = _read_domain_registry()
+    issues = _validate_domain_registry(registry)
+    domains = registry.get("domains") or {}
+    enriched_domains: dict[str, Any] = {}
+    for domain_id, config in domains.items():
+        if not isinstance(config, dict):
+            enriched_domains[str(domain_id)] = config
+            continue
+        current_status = _domain_path_status(str(config.get("vault_subpath") or "."))
+        target_status = _domain_path_status(str(config.get("target_vault_subpath") or ""))
+        enriched_domains[str(domain_id)] = {
+            **config,
+            "vault_status": {
+                **current_status,
+                "indexed_files": _domain_indexed_count(str(config.get("vault_subpath") or ".")),
+            },
+            "target_vault_status": target_status if config.get("target_vault_subpath") else None,
+        }
+    enabled_domains = [item for item in enriched_domains.values() if isinstance(item, dict) and bool(item.get("enabled"))]
+    return {
+        **registry,
+        "domains": enriched_domains,
+        "summary": {
+            "domains": len(enriched_domains),
+            "enabled": len(enabled_domains),
+            "isolated": sum(1 for item in enabled_domains if item.get("isolation_mode") == "domain_subpath"),
+            "legacy_root": sum(1 for item in enabled_domains if item.get("isolation_mode") == "legacy_root"),
+            "issues": len(issues),
+            "errors": sum(1 for item in issues if item.get("severity") == "error"),
+            "warnings": sum(1 for item in issues if item.get("severity") == "warning"),
+        },
+        "issues": issues,
+    }
 
 
 async def _list_litellm_models() -> list[str]:
@@ -522,16 +668,17 @@ HTML_PAGE = r'''<!doctype html>
     <button class="active" data-tab="dashboard"><span>仪表盘</span><span class="nav-key">01</span></button>
     <button data-tab="health"><span>健康检查</span><span class="nav-key">02</span></button>
     <button data-tab="models"><span>模型配置</span><span class="nav-key">03</span></button>
+    <button data-tab="domains"><span>领域注册表</span><span class="nav-key">04</span></button>
     <div class="nav-group">知识维护</div>
-    <button data-tab="sync"><span>同步管理</span><span class="nav-key">04</span></button>
-    <button data-tab="docs"><span>文档浏览</span><span class="nav-key">05</span></button>
-    <button data-tab="schema"><span>Schema 模板</span><span class="nav-key">06</span></button>
+    <button data-tab="sync"><span>同步管理</span><span class="nav-key">05</span></button>
+    <button data-tab="docs"><span>文档浏览</span><span class="nav-key">06</span></button>
+    <button data-tab="schema"><span>Schema 模板</span><span class="nav-key">07</span></button>
     <div class="nav-group">问答质量</div>
-    <button data-tab="rag"><span>RAG 测试</span><span class="nav-key">07</span></button>
-    <button data-tab="gaps"><span>知识缺口</span><span class="nav-key">08</span></button>
-    <button data-tab="audit"><span>审计日志</span><span class="nav-key">09</span></button>
+    <button data-tab="rag"><span>RAG 测试</span><span class="nav-key">08</span></button>
+    <button data-tab="gaps"><span>知识缺口</span><span class="nav-key">09</span></button>
+    <button data-tab="audit"><span>审计日志</span><span class="nav-key">10</span></button>
     <div class="nav-group">工具</div>
-    <button data-tab="obsidian"><span>obsidian-wiki</span><span class="nav-key">10</span></button>
+    <button data-tab="obsidian"><span>obsidian-wiki</span><span class="nav-key">11</span></button>
   </nav>
 </aside>
 <div class="page">
@@ -605,6 +752,22 @@ HTML_PAGE = r'''<!doctype html>
     </div>
   </div>
   <details class="raw"><summary>调试详情</summary><div class="panel"><div class="panel-body"><pre id="modelConfigRaw">等待加载...</pre></div></div></details>
+</section>
+<section id="domains">
+  <div class="section-head">
+    <div><h2>领域注册表</h2><div class="section-desc">统一记录不同知识领域的 profile、Vault 子路径、RAG 入口、同步状态和向量 collection。第一版只读展示，不改变当前问答路由。</div></div>
+    <div class="toolbar"><button class="action primary" onclick="loadDomains()">刷新注册表</button></div>
+  </div>
+  <div id="domainCards" class="grid" style="margin-bottom:14px"></div>
+  <div class="panel">
+    <div class="panel-head"><strong>领域列表</strong><span id="domainRegistryPath" class="muted"></span></div>
+    <div class="panel-body"><div id="domainList" class="task-list"></div></div>
+  </div>
+  <div class="panel" style="margin-top:14px">
+    <div class="panel-head"><strong>校验结果</strong><span id="domainIssueCount" class="badge">等待</span></div>
+    <div class="panel-body"><div id="domainIssues"></div></div>
+  </div>
+  <details class="raw"><summary>调试详情</summary><div class="panel"><div class="panel-body"><pre id="domainsRaw">等待加载...</pre></div></div></details>
 </section>
 <section id="sync">
   <div class="section-head">
@@ -706,6 +869,7 @@ const $ = (id) => document.getElementById(id);
 const pageInfo = {
   dashboard:['仪表盘','企业正式 Wiki 运行状态'],
   models:['模型配置','LiteLLM 可用模型与 RAG 运行模型'],
+  domains:['领域注册表','多领域知识库的管理侧注册表'],
   sync:['同步管理','Git 同步和索引刷新'],
   rag:['RAG 测试','正式 Wiki 问答链路验证'],
   docs:['文档浏览','远端 Vault Markdown 只读浏览'],
@@ -722,6 +886,7 @@ function showTab(id){
   $('pageTitle').textContent=pageInfo[id]?.[0]||id;
   $('pageMeta').textContent=pageInfo[id]?.[1]||'';
   if(id === 'models') loadModelConfig();
+  if(id === 'domains') loadDomains();
 }
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
 function pretty(x){ return JSON.stringify(x,null,2); }
@@ -907,6 +1072,47 @@ async function saveModelConfig(){
     $('modelSaveState').textContent = '保存失败';
     $('modelConfigRaw').textContent = String(e.stack || e);
   }
+}
+async function loadDomains(){
+  const data = await getJson('/api/domains');
+  $('domainsRaw').textContent = pretty(data);
+  const summary = data.summary || {};
+  $('domainRegistryPath').textContent = data.registry_path || '';
+  $('domainCards').innerHTML = [
+    card('领域数', summary.domains ?? 0, 'domains'),
+    card('启用领域', summary.enabled ?? 0, 'enabled', summary.enabled > 0 ? 'ok' : 'warning'),
+    card('已隔离', summary.isolated ?? 0, 'domain_subpath'),
+    card('根目录兼容', summary.legacy_root ?? 0, 'legacy_root'),
+    card('默认领域', data.default_domain || '-', 'default_domain'),
+    card('配置来源', data.source || '-', data.registry_path || '')
+  ].join('');
+  const domains = data.domains || {};
+  const entries = Object.entries(domains);
+  $('domainList').innerHTML = entries.length ? entries.map(([id, cfg]) => {
+    const enabled = !!cfg.enabled;
+    const collection = cfg.vector_collection || cfg.milvus_collection || '-';
+    const vault = cfg.vault_status || {};
+    const target = cfg.target_vault_status || {};
+    const isolation = cfg.isolation_mode || '-';
+    const targetText = cfg.target_vault_subpath ? `${cfg.target_vault_subpath} (${target.exists ? 'exists' : 'not ready'})` : '-';
+    return `<div class="task-card">
+      <div class="task-top"><div><div class="task-title">${escapeHtml(cfg.display_name || id)}</div><div class="list-sub">${escapeHtml(id)} · profile=${escapeHtml(cfg.profile || '-')} · isolation=${escapeHtml(isolation)}</div></div>${badge(enabled ? 'ok' : 'warning', enabled ? 'enabled' : 'disabled')}</div>
+      <div class="task-meta">
+        <span>vault=${escapeHtml(cfg.vault_subpath || '-')} (${vault.exists ? 'exists' : 'missing'})</span>
+        <span>target=${escapeHtml(targetText)}</span>
+        <span>md=${escapeHtml(vault.markdown_files ?? '-')}</span>
+        <span>indexed=${escapeHtml(vault.indexed_files ?? '-')}</span>
+        <span>rag=${escapeHtml(cfg.rag_base_url || '-')}</span>
+        <span>sync=${escapeHtml(cfg.sync_status_file || '-')}</span>
+        <span>vector=${escapeHtml(cfg.vector_backend || '-')} / ${escapeHtml(collection)}</span>
+        <span>entry=${escapeHtml(cfg.entrypoint || '-')}</span>
+      </div>
+      ${cfg.description ? `<div class="list-sub" style="margin-top:8px">${escapeHtml(cfg.description)}</div>` : ''}
+    </div>`;
+  }).join('') : '<div class="empty">未定义领域</div>';
+  const issues = data.issues || [];
+  $('domainIssueCount').outerHTML = badge(issues.length ? (summary.errors ? 'failed' : 'warning') : 'ok', `${issues.length} 项`).replace('<span','<span id="domainIssueCount"');
+  $('domainIssues').innerHTML = issues.length ? `<div class="task-list">${issues.map(item=>`<div class="task-card"><div class="task-top"><div class="task-title">${escapeHtml(item.domain || '-')} · ${escapeHtml(item.code || '-')}</div>${badge(item.severity === 'error' ? 'failed' : 'warning', item.severity || '-')}</div><div class="task-meta"><span>${escapeHtml(item.message || '')}</span></div></div>`).join('')}</div>` : '<div class="empty">领域注册表校验通过</div>';
 }
 async function runAction(url){
   $('actionLog').textContent='running...';
@@ -1100,6 +1306,11 @@ async def save_model_config(request: ModelConfigRequest) -> dict[str, Any]:
     }
 
 
+@app.get("/api/domains")
+def domains() -> dict[str, Any]:
+    return _domain_registry_status()
+
+
 @app.get("/api/sync-status")
 def sync_status() -> dict[str, Any]:
     return _jsonable(_read_sync_status())
@@ -1216,6 +1427,25 @@ def _wiki_page_candidates() -> dict[str, Path]:
     return pages
 
 
+def _wiki_knowledge_roots() -> list[Path]:
+    registry = _read_domain_registry()
+    roots: list[Path] = []
+    for config in (registry.get("domains") or {}).values():
+        if not isinstance(config, dict) or not bool(config.get("enabled")):
+            continue
+        subpath = str(config.get("vault_subpath") or ".")
+        status = _domain_path_status(subpath)
+        if not status.get("safe"):
+            continue
+        base = (VAULT_PATH / subpath).resolve()
+        knowledge_root = base / "10_Knowledge"
+        if knowledge_root.exists():
+            roots.append(knowledge_root)
+    if not roots and (VAULT_PATH / "10_Knowledge").exists():
+        roots.append(VAULT_PATH / "10_Knowledge")
+    return roots
+
+
 def _check_updated(value: Any) -> tuple[str, str | None]:
     if not value:
         return "warning", "missing updated"
@@ -1232,7 +1462,11 @@ def _check_updated(value: Any) -> tuple[str, str | None]:
 
 @app.get("/api/wiki-health")
 def wiki_health() -> dict[str, Any]:
-    docs = sorted((VAULT_PATH / "10_Knowledge").rglob("*.md")) if (VAULT_PATH / "10_Knowledge").exists() else []
+    knowledge_roots = _wiki_knowledge_roots()
+    docs: list[Path] = []
+    for root in knowledge_roots:
+        docs.extend(root.rglob("*.md"))
+    docs = sorted(docs)
     indexed_rows = _fetch_all("select path, status, error from indexed_files")
     indexed = {row["path"]: row for row in indexed_rows}
     pages = _wiki_page_candidates()
@@ -1279,6 +1513,7 @@ def wiki_health() -> dict[str, Any]:
 
     summary = {
         "files": len(docs),
+        "knowledge_roots": [root.relative_to(VAULT_PATH).as_posix() for root in knowledge_roots],
         "issues": len(issues),
         "errors": sum(1 for item in issues if item["severity"] == "error"),
         "warnings": sum(1 for item in issues if item["severity"] == "warning"),
@@ -1385,6 +1620,23 @@ async def health_detail() -> dict[str, Any]:
         ))
     except Exception as exc:
         checks.append(_health_item("litellm_models", False, message=str(exc), details={"base_url": LITELLM_BASE_URL}))
+
+    try:
+        registry = _domain_registry_status()
+        summary = registry.get("summary", {})
+        errors = int(summary.get("errors") or 0)
+        warnings_count = int(summary.get("warnings") or 0)
+        domain_count = int(summary.get("domains") or 0)
+        enabled_count = int(summary.get("enabled") or 0)
+        checks.append(_health_item(
+            "domain_registry",
+            errors == 0 and domain_count > 0 and enabled_count > 0,
+            status="ok" if errors == 0 and warnings_count == 0 and domain_count > 0 and enabled_count > 0 else ("warning" if errors == 0 else "failed"),
+            message=f"domains={domain_count}, enabled={enabled_count}, issues={summary.get('issues')}",
+            details=registry,
+        ))
+    except Exception as exc:
+        checks.append(_health_item("domain_registry", False, message=str(exc), details={"path": str(DOMAIN_REGISTRY_PATH)}))
 
     git_head = _run(["git", "log", "-1", "--oneline", "--decorate"], cwd=VAULT_PATH, timeout=10)
     git_status = _run(["git", "status", "--short"], cwd=VAULT_PATH, timeout=10)

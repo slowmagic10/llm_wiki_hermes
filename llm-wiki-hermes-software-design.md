@@ -971,7 +971,35 @@ allowed_groups: [internal]
 
 ### 22.3 Vault 多领域目录规划
 
-第一阶段不迁移当前业务 Vault 目录。未来如果引入第二个领域，Vault 建议演进为：
+当前 `default` 领域已迁移到 domain 子目录：
+
+```text
+vault/
+  domains/
+    default/
+      00_Templates/
+      10_Knowledge/
+      90_Archive/
+```
+
+管理侧已经在 `config/domains.yml` 中记录：
+
+```yaml
+vault_layout:
+  mode: domain_subpath
+  target_root: domains
+  migration: completed
+
+domains:
+  default:
+    vault_subpath: domains/default
+    target_vault_subpath: domains/default
+    isolation_mode: domain_subpath
+```
+
+Admin Web 的“领域注册表”页面会展示每个 domain 的当前 `vault_subpath`、目标 `target_vault_subpath`、Markdown 文件数和已索引文件数。`wiki_health` 也会按启用领域的 `vault_subpath/10_Knowledge` 扫描。
+
+未来如果引入第二个领域，Vault 建议演进为：
 
 ```text
 vault/
@@ -996,6 +1024,7 @@ vault/
 2. 每个领域 RAG 实例只索引自己的子目录。
 3. 不做全量索引后再靠过滤隔离。
 4. 未来若某个领域需要独立权限或独立负责人，再拆成独立 Vault 仓库。
+5. 迁移现有 `default` 领域时必须人工移动 Markdown、更新内部 wikilink、重新嵌入索引，并确认 `/api/health-detail` 和 `/api/domains` 正常。
 
 ### 22.4 domain 与 profile
 
@@ -1022,16 +1051,35 @@ sources: []
 
 `profile` 由领域注册表决定，不要求每篇文档重复声明。
 
-未来领域注册表示例：
+当前已落地的第一版领域注册表位于：
+
+```text
+/root/llm_wiki_hermes/config/domains.yml
+```
+
+当前配置示例：
 
 ```yaml
+version: 1
+default_domain: default
+
+vault_layout:
+  mode: domain_subpath
+  target_root: domains
+  migration: completed
+
 domains:
   default:
-    display_name: 企业知识库
-    profile: default
+    display_name: 默认知识库
+    profile: product
     vault_subpath: domains/default
-    rag_base_url: http://127.0.0.1:18080
+    target_vault_subpath: domains/default
+    isolation_mode: domain_subpath
+    rag_base_url: http://rag-api:18080
     sync_status_file: /root/llm_wiki_hermes/logs/llm-wiki-sync-status.json
+    vector_backend: milvus
+    vector_collection: llm_wiki_chunks_v2
+    entrypoint: /wiki
     enabled: true
 
   ops:
@@ -1042,7 +1090,7 @@ domains:
     enabled: false
 ```
 
-第一版 `domains.yml` 只作为 Admin 领域注册表，不作为 RAG、hook、sync-runner 的全系统配置中心。
+第一版 `domains.yml` 只作为 Admin 领域注册表，不作为 RAG、hook、sync-runner 的全系统配置中心。当前 Admin Web 已提供只读接口 `/api/domains` 和页面“领域注册表”，并在 `/api/health-detail` 中检查 `domain_registry`。
 
 ### 22.5 frontmatter 策略
 

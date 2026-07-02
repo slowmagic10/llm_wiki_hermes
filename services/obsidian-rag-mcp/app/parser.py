@@ -63,13 +63,14 @@ def should_index(relative_path: str, frontmatter: dict[str, Any]) -> bool:
     path = relative_path.replace("\\", "/")
     if not path.endswith(".md"):
         return False
-    if path.startswith(("90_Archive/", "Templates/", "Assets/")):
+    parts = path.split("/")
+    if any(part in {"90_Archive", "Templates", "Assets"} for part in parts):
         return False
     if frontmatter.get("rag") is False:
         return False
     if str(frontmatter.get("status", "")).lower() == "archived":
         return False
-    return path.startswith("10_Knowledge/")
+    return path.startswith("10_Knowledge/") or "/10_Knowledge/" in path
 
 
 def parse_markdown(file_path: Path, vault_path: Path) -> ParsedDocument | None:

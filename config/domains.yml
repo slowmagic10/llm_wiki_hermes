@@ -1,0 +1,53 @@
+version: 1
+default_domain: default
+
+vault_layout:
+  mode: domain_subpath
+  target_root: domains
+  migration: completed
+
+notes:
+  - 第一版领域注册表只供 Admin 管理侧读取，不直接改变 RAG、Hermes hook 或同步器路由。
+  - 默认领域已迁移到 vault/domains/default。
+  - Vault 目录隔离的目标结构是 vault/domains/<domain>/...，新增领域时按该结构创建目录。
+  - 新增第二个领域时，优先新增独立 Hermes hook 和独立 RAG 实例，再把领域注册到这里。
+
+domains:
+  default:
+    display_name: 默认知识库
+    description: 当前正式 Wiki，主要承载产品、售前和内部问答知识。
+    profile: product
+    vault_subpath: domains/default
+    target_vault_subpath: domains/default
+    isolation_mode: domain_subpath
+    rag_base_url: http://rag-api:18080
+    sync_status_file: /root/llm_wiki_hermes/logs/llm-wiki-sync-status.json
+    vector_backend: milvus
+    vector_collection: llm_wiki_chunks_v2
+    entrypoint: /wiki
+    enabled: true
+
+profiles:
+  product:
+    display_name: 产品知识
+    answer_contract:
+      - 结论
+      - 适用场景
+      - 注意事项
+      - 可替代方案
+      - 来源
+    required_core_fields:
+      - rag
+      - title
+      - type
+      - status
+      - owner
+      - updated
+    extension_fields:
+      - sku
+      - aliases
+      - product_line
+      - applies_to
+      - compatible_with
+      - alternatives
+      - limitations
