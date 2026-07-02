@@ -1051,6 +1051,14 @@ sources: []
 
 `profile` 由领域注册表决定，不要求每篇文档重复声明。
 
+当前 `domains/default/**` 下的正式知识文档和模板已统一补充：
+
+```yaml
+domain: default
+```
+
+Admin Web `wiki_health` 会检查 `domain` 是否缺失，并检查它是否与领域注册表中的路径归属一致。
+
 当前已落地的第一版领域注册表位于：
 
 ```text

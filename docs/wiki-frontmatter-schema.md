@@ -58,6 +58,7 @@ limitations:
 - `owner`: 维护人。
 - `updated`: 最后确认日期，格式 `YYYY-MM-DD`。
 - `domain`: 知识领域，例如 `default`、`product`、`it`、`hr`、`legal`。
+  当前默认领域为 `default`，对应路径 `domains/default/**`。
 - `category`: 页面分类。
 - `tags`: 标签。
 - `summary`: 一句话摘要。
@@ -76,8 +77,10 @@ limitations:
 
 Admin Web 当前会检查：
 
-- `10_Knowledge/**/*.md` 是否缺 frontmatter。
+- 启用领域的 `vault_subpath/10_Knowledge/**/*.md` 是否缺 frontmatter。
 - 必填字段是否缺失。
+- `domain` 是否缺失。
+- `domain` 是否与领域注册表中的路径归属一致，例如 `domains/default/**` 应写 `domain: default`。
 - `status` 是否合法。
 - `updated` 是否缺失或超过 180 天。
 - `sku` / `aliases` 是否重复。

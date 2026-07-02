@@ -33,7 +33,7 @@ DOMAIN_REGISTRY_PATH = Path(os.getenv("DOMAIN_REGISTRY_PATH", str(PROJECT_ROOT /
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]")
-REQUIRED_FRONTMATTER = ("title", "type", "status", "owner", "updated")
+REQUIRED_FRONTMATTER = ("title", "type", "status", "owner", "updated", "domain")
 VALID_STATUS = {"active", "draft", "archived"}
 SKU_KEYS = ("sku", "aliases")
 
@@ -1446,6 +1446,27 @@ def _wiki_knowledge_roots() -> list[Path]:
     return roots
 
 
+def _expected_domain_for_path(relative_path: str) -> str | None:
+    registry = _read_domain_registry()
+    best_domain: str | None = None
+    best_len = -1
+    path = relative_path.replace("\\", "/")
+    for domain_id, config in (registry.get("domains") or {}).items():
+        if not isinstance(config, dict) or not bool(config.get("enabled")):
+            continue
+        subpath = str(config.get("vault_subpath") or ".").strip("/")
+        if not subpath or subpath == ".":
+            match = True
+            match_len = 0
+        else:
+            match = path == subpath or path.startswith(subpath + "/")
+            match_len = len(subpath)
+        if match and match_len > best_len:
+            best_domain = str(domain_id)
+            best_len = match_len
+    return best_domain
+
+
 def _check_updated(value: Any) -> tuple[str, str | None]:
     if not value:
         return "warning", "missing updated"
@@ -1489,6 +1510,10 @@ def wiki_health() -> dict[str, Any]:
             status = str(fm.get("status") or "").lower()
             if status and status not in VALID_STATUS:
                 add(rel, "error", "invalid_status", f"status 不合法: {status}")
+            expected_domain = _expected_domain_for_path(rel)
+            actual_domain = str(fm.get("domain") or "").strip()
+            if expected_domain and actual_domain and actual_domain != expected_domain:
+                add(rel, "error", "domain_mismatch", f"domain={actual_domain} 与路径所属领域 {expected_domain} 不一致")
             state, msg = _check_updated(fm.get("updated"))
             if msg:
                 add(rel, state, "updated_check", msg)
