@@ -36,15 +36,6 @@ WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]")
 REQUIRED_FRONTMATTER = ("title", "type", "status", "owner", "updated", "domain")
 VALID_STATUS = {"active", "draft", "archived"}
 SKU_KEYS = ("sku", "aliases")
-GRAPH_FIELD_SPECS = (
-    ("sku", "sku", "declares_sku"),
-    ("aliases", "alias", "has_alias"),
-    ("tags", "tag", "tagged"),
-    ("category", "category", "in_category"),
-    ("compatible_with", "compatible", "compatible_with"),
-    ("alternatives", "alternative", "alternative_to"),
-    ("applies_to", "applies_to", "applies_to"),
-)
 
 app = FastAPI(title="LLM Wiki Admin", version="0.1.0")
 
@@ -642,53 +633,6 @@ HTML_PAGE = r'''<!doctype html>
     .audit-question { font-weight:700; margin-bottom:8px; }
     .audit-meta { display:flex; gap:8px; flex-wrap:wrap; color:var(--muted); font-size:12px; }
     .doc-text { max-height:680px; }
-    .graph-layout { display:grid; grid-template-columns:minmax(520px,1fr) minmax(280px,360px); gap:14px; align-items:start; }
-    .graph-canvas {
-      width:100%;
-      height:680px;
-      border:1px solid var(--line);
-      border-radius:8px;
-      background:#fbfcfe;
-      overflow:hidden;
-    }
-    .graph-svg { width:100%; height:100%; display:block; }
-    .graph-edge { stroke:#b8c2d2; stroke-width:1.1; opacity:.62; }
-    .graph-edge.wikilink { stroke:#70839f; stroke-width:1.5; }
-    .graph-node { cursor:pointer; stroke:#fff; stroke-width:2; filter:drop-shadow(0 1px 1px rgba(15,23,42,.18)); }
-    .graph-node.document { fill:#2563eb; }
-    .graph-node.sku { fill:#0f8f52; }
-    .graph-node.alias { fill:#f28e2b; }
-    .graph-node.tag { fill:#76b7b2; }
-    .graph-node.category { fill:#b07aa1; }
-    .graph-node.domain { fill:#17202a; }
-    .graph-node.compatible { fill:#9c755f; }
-    .graph-node.alternative { fill:#b42318; }
-    .graph-node.applies_to { fill:#647084; }
-    .graph-label { font-size:11px; fill:#1f2937; paint-order:stroke; stroke:#fff; stroke-width:3px; stroke-linejoin:round; pointer-events:none; }
-    .graph-side { position:sticky; top:82px; }
-    .legend { display:flex; gap:6px; flex-wrap:wrap; }
-    .legend-item { display:inline-flex; align-items:center; gap:6px; color:var(--muted); font-size:12px; }
-    .legend-dot { width:10px; height:10px; border-radius:999px; display:inline-block; }
-    .relation-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; }
-    .relation-card {
-      border:1px solid var(--line);
-      border-radius:8px;
-      background:#fff;
-      padding:13px;
-      cursor:pointer;
-      box-shadow:0 1px 2px rgba(15,23,42,.04);
-    }
-    .relation-card:hover { border-color:var(--blue); box-shadow:0 6px 18px rgba(37,99,235,.09); }
-    .relation-title { font-weight:760; line-height:1.35; margin-bottom:4px; }
-    .relation-path { color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:10px; }
-    .relation-section { margin-top:10px; }
-    .relation-label { color:var(--muted); font-size:11px; font-weight:720; letter-spacing:.04em; text-transform:uppercase; margin-bottom:5px; }
-    .chip-row { display:flex; flex-wrap:wrap; gap:6px; }
-    .chip { border:1px solid var(--line); background:var(--surface-soft); color:var(--text); border-radius:999px; padding:3px 8px; font-size:12px; line-height:1.35; }
-    .chip.sku { color:var(--green); background:var(--green-soft); border-color:#b8e3c8; }
-    .chip.alias { color:#a15c06; background:#fff4e6; border-color:#f6d7ad; }
-    .chip.compatible { color:#6f4e37; background:#f6eee9; border-color:#dec8b8; }
-    .chip.alternative { color:var(--red); background:var(--red-soft); border-color:#f2b7b2; }
     .kv { display:grid; gap:8px; }
     .kv-row { display:grid; grid-template-columns:92px 1fr; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); }
     .kv-row:last-child { border-bottom:0; }
@@ -704,9 +648,7 @@ HTML_PAGE = r'''<!doctype html>
       .nav-key { display:none; }
       header { position:relative; }
       section { padding:18px; }
-      .split, .two-col, .dashboard-grid, .pipeline, .rag-layout, .answer-meta, .docs-layout, .graph-layout { grid-template-columns:1fr; }
-      .graph-canvas { height:520px; }
-      .graph-side { position:relative; top:auto; }
+      .split, .two-col, .dashboard-grid, .pipeline, .rag-layout, .answer-meta, .docs-layout { grid-template-columns:1fr; }
       .state-band { grid-template-columns:1fr; }
       .node::after { display:none; }
       .health-row { grid-template-columns:1fr; gap:8px; }
@@ -730,14 +672,13 @@ HTML_PAGE = r'''<!doctype html>
     <div class="nav-group">知识维护</div>
     <button data-tab="sync"><span>同步管理</span><span class="nav-key">05</span></button>
     <button data-tab="docs"><span>文档浏览</span><span class="nav-key">06</span></button>
-    <button data-tab="graph"><span>知识图谱</span><span class="nav-key">07</span></button>
-    <button data-tab="schema"><span>Schema 模板</span><span class="nav-key">08</span></button>
+    <button data-tab="schema"><span>Schema 模板</span><span class="nav-key">07</span></button>
     <div class="nav-group">问答质量</div>
-    <button data-tab="rag"><span>RAG 测试</span><span class="nav-key">09</span></button>
-    <button data-tab="gaps"><span>知识缺口</span><span class="nav-key">10</span></button>
-    <button data-tab="audit"><span>审计日志</span><span class="nav-key">11</span></button>
+    <button data-tab="rag"><span>RAG 测试</span><span class="nav-key">08</span></button>
+    <button data-tab="gaps"><span>知识缺口</span><span class="nav-key">09</span></button>
+    <button data-tab="audit"><span>审计日志</span><span class="nav-key">10</span></button>
     <div class="nav-group">工具</div>
-    <button data-tab="obsidian"><span>obsidian-wiki</span><span class="nav-key">12</span></button>
+    <button data-tab="obsidian"><span>obsidian-wiki</span><span class="nav-key">11</span></button>
   </nav>
 </aside>
 <div class="page">
@@ -881,53 +822,6 @@ HTML_PAGE = r'''<!doctype html>
     <div class="panel"><div class="panel-head"><strong>Frontmatter</strong><span id="docStatus" class="badge">等待</span></div><div class="panel-body"><div id="docMeta" class="kv"><div class="empty">选择文档后显示元数据</div></div></div></div>
   </div>
 </section>
-<section id="graph">
-  <div class="section-head">
-    <div><h2>知识图谱</h2><div class="section-desc">按业务语义展示文档、型号、别名、标签、兼容和替代关系。</div></div>
-    <div class="toolbar"><button class="action primary" onclick="loadGraph()">刷新图谱</button></div>
-  </div>
-  <div id="graphCards" class="grid" style="margin-bottom:14px"></div>
-  <div class="graph-layout">
-    <div class="panel">
-      <div class="panel-head"><strong>业务关系图</strong><span id="graphMeta" class="muted">等待加载</span></div>
-      <div class="panel-body">
-        <div class="toolbar" style="margin-bottom:10px">
-          <input id="graphSearch" placeholder="搜索文档、型号、标签..." oninput="renderGraph()" style="max-width:360px">
-          <select id="graphViewMode" onchange="renderGraph()" style="max-width:160px">
-            <option value="core">核心视图</option>
-            <option value="advanced">高级视图</option>
-          </select>
-          <select id="graphTypeFilter" onchange="renderGraph()" style="max-width:220px">
-            <option value="">全部节点</option>
-            <option value="document">文档</option>
-            <option value="sku">SKU</option>
-            <option value="alias">别名</option>
-            <option value="tag">标签</option>
-            <option value="category">分类</option>
-            <option value="domain">领域</option>
-            <option value="compatible">兼容对象</option>
-            <option value="alternative">替代方案</option>
-            <option value="applies_to">适用对象</option>
-          </select>
-        </div>
-        <div class="legend" id="graphLegend" style="margin-bottom:10px"></div>
-        <div id="relationCards" class="relation-grid"></div>
-        <div id="graphCanvas" class="graph-canvas" style="display:none"><svg id="graphSvg" class="graph-svg" viewBox="0 0 1100 680" role="img" aria-label="知识图谱"></svg></div>
-      </div>
-    </div>
-    <div class="graph-side stack">
-      <div class="panel">
-        <div class="panel-head"><strong>节点详情</strong><span id="graphSelectedType" class="badge">未选择</span></div>
-        <div class="panel-body"><div id="graphDetails" class="kv"><div class="empty">点击图谱节点查看详情</div></div></div>
-      </div>
-      <div class="panel">
-        <div class="panel-head"><strong>关系统计</strong><span class="muted">按类型统计</span></div>
-        <div class="panel-body"><div id="graphStats" class="list"></div></div>
-      </div>
-    </div>
-  </div>
-  <details class="raw"><summary>调试详情</summary><div class="panel"><div class="panel-body"><pre id="graphRaw">等待加载...</pre></div></div></details>
-</section>
 <section id="gaps">
   <div class="section-head">
     <div><h2>知识缺口</h2><div class="section-desc">正式 Wiki 无法回答的问题会记录在这里，后续用于补充 Markdown。</div></div>
@@ -979,7 +873,6 @@ const pageInfo = {
   sync:['同步管理','Git 同步和索引刷新'],
   rag:['RAG 测试','正式 Wiki 问答链路验证'],
   docs:['文档浏览','远端 Vault Markdown 只读浏览'],
-  graph:['知识图谱','文档、型号、别名、标签和兼容关系'],
   gaps:['知识缺口','未命中问题和补充线索'],
   audit:['审计日志','最近问答请求和来源记录'],
   health:['健康检查','系统依赖与知识质量检查'],
@@ -994,7 +887,6 @@ function showTab(id){
   $('pageMeta').textContent=pageInfo[id]?.[1]||'';
   if(id === 'models') loadModelConfig();
   if(id === 'domains') loadDomains();
-  if(id === 'graph') loadGraph();
 }
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
 function pretty(x){ return JSON.stringify(x,null,2); }
@@ -1276,245 +1168,6 @@ async function previewFile(path){
   $('docMeta').innerHTML=renderMeta(parsed.meta);
   const status = parsed.meta?.status || (parsed.meta ? 'metadata' : 'missing');
   $('docStatus').outerHTML = badge(status === 'active' ? 'ok' : (status === 'missing' ? 'warning' : 'warning'), status).replace('<span','<span id="docStatus"');
-}
-let graphData = null;
-let graphPositions = {};
-const graphTypeLabels = {
-  domain:'领域',
-  category:'分类',
-  document:'文档',
-  sku:'SKU',
-  alias:'别名',
-  compatible:'兼容对象',
-  alternative:'替代方案',
-  applies_to:'适用对象',
-  tag:'标签'
-};
-const graphColors = {
-  domain:'#17202a',
-  category:'#b07aa1',
-  document:'#2563eb',
-  sku:'#0f8f52',
-  alias:'#f28e2b',
-  compatible:'#9c755f',
-  alternative:'#b42318',
-  applies_to:'#647084',
-  tag:'#76b7b2'
-};
-const graphCoreTypes = new Set(['document','sku','alias','compatible','alternative']);
-const graphCoreEdges = new Set(['declares_sku','has_alias','compatible_with','alternative_to']);
-function graphRadius(type){
-  return {domain:10, category:9, document:8, sku:7, alias:6, compatible:6, alternative:6, applies_to:6, tag:5}[type] || 5;
-}
-function graphTypeOrder(type){
-  return ['domain','category','document','sku','alias','compatible','alternative','applies_to','tag'].indexOf(type);
-}
-function graphVisibleData(){
-  if(!graphData) return {nodes:[], edges:[]};
-  const term = ($('graphSearch')?.value || '').trim().toLowerCase();
-  const type = $('graphTypeFilter')?.value || '';
-  const mode = $('graphViewMode')?.value || 'core';
-  const advanced = mode === 'advanced';
-  const nodes = graphData.nodes || [];
-  const edges = graphData.edges || [];
-  const nodeById = new Map(nodes.map(node => [node.id, node]));
-  let visibleIds = new Set();
-  for(const node of nodes){
-    const haystack = [node.label, node.type, node.path, node.domain, node.summary].filter(Boolean).join(' ').toLowerCase();
-    const typeOk = !type || node.type === type;
-    const modeOk = advanced || term || graphCoreTypes.has(node.type);
-    const termOk = !term || haystack.includes(term);
-    if(typeOk && modeOk && termOk) visibleIds.add(node.id);
-  }
-  if(term){
-    for(const edge of edges){
-      if(visibleIds.has(edge.source)) visibleIds.add(edge.target);
-      if(visibleIds.has(edge.target)) visibleIds.add(edge.source);
-    }
-  }
-  const visibleNodes = nodes.filter(node => visibleIds.has(node.id));
-  const visibleSet = new Set(visibleNodes.map(node => node.id));
-  const visibleEdges = edges.filter(edge => {
-    const edgeModeOk = advanced || term || graphCoreEdges.has(edge.type);
-    return edgeModeOk && visibleSet.has(edge.source) && visibleSet.has(edge.target);
-  });
-  return {
-    nodes: visibleNodes,
-    edges: visibleEdges,
-    nodeById
-  };
-}
-function layoutGraph(nodes){
-  const width = 1100;
-  const height = 680;
-  const cx = width / 2;
-  const cy = height / 2;
-  const rings = {
-    domain: 0,
-    category: 110,
-    document: 220,
-    sku: 320,
-    alias: 390,
-    compatible: 465,
-    alternative: 465,
-    applies_to: 465,
-    tag: 530
-  };
-  const grouped = {};
-  for(const node of nodes){
-    const key = node.type || 'document';
-    if(!grouped[key]) grouped[key] = [];
-    grouped[key].push(node);
-  }
-  const positions = {};
-  Object.entries(grouped).forEach(([type, items]) => {
-    items.sort((a,b) => String(a.label).localeCompare(String(b.label), 'zh-CN'));
-    if(type === 'domain' && items.length === 1){
-      positions[items[0].id] = {x:cx, y:cy};
-      return;
-    }
-    const radius = rings[type] ?? 470;
-    const offset = (graphTypeOrder(type) + 1) * 0.31;
-    items.forEach((node, index) => {
-      const angle = (Math.PI * 2 * index / Math.max(items.length, 1)) + offset;
-      positions[node.id] = {
-        x: cx + Math.cos(angle) * radius,
-        y: cy + Math.sin(angle) * radius * 0.72
-      };
-    });
-  });
-  return positions;
-}
-function renderGraph(){
-  if(!graphData){
-    $('graphSvg').innerHTML = '';
-    return;
-  }
-  const {nodes, edges, nodeById} = graphVisibleData();
-  renderGraphStats(nodes, edges);
-  const mode = $('graphViewMode')?.value || 'core';
-  if(mode !== 'advanced'){
-    $('graphCanvas').style.display = 'none';
-    $('relationCards').style.display = 'grid';
-    renderRelationCards(nodes, edges, nodeById);
-    return;
-  }
-  $('relationCards').style.display = 'none';
-  $('graphCanvas').style.display = 'block';
-  graphPositions = layoutGraph(nodes);
-  const svg = $('graphSvg');
-  if(!nodes.length){
-    svg.innerHTML = '<text x="550" y="340" text-anchor="middle" class="graph-label">没有匹配的节点</text>';
-    $('graphMeta').textContent = '0 nodes / 0 edges';
-    return;
-  }
-  const edgeHtml = edges.map(edge => {
-    const a = graphPositions[edge.source];
-    const b = graphPositions[edge.target];
-    if(!a || !b) return '';
-    return `<line class="graph-edge ${edge.type === 'wikilink' ? 'wikilink' : ''}" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}"><title>${escapeHtml(edge.type || 'related')}</title></line>`;
-  }).join('');
-  const sortedNodes = [...nodes].sort((a,b) => graphRadius(a.type) - graphRadius(b.type));
-  const nodeHtml = sortedNodes.map(node => {
-    const p = graphPositions[node.id];
-    if(!p) return '';
-    const label = String(node.label || '').length > 22 ? String(node.label).slice(0, 21) + '...' : String(node.label || '');
-    return `<g onclick="selectGraphNode('${q(node.id)}')">
-      <circle class="graph-node ${escapeHtml(node.type || 'document')}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${graphRadius(node.type)}"><title>${escapeHtml(node.label || node.id)}</title></circle>
-      <text class="graph-label" x="${(p.x + graphRadius(node.type) + 4).toFixed(1)}" y="${(p.y + 4).toFixed(1)}">${escapeHtml(label)}</text>
-    </g>`;
-  }).join('');
-  svg.innerHTML = edgeHtml + nodeHtml;
-  $('graphMeta').textContent = `${nodes.length} nodes / ${edges.length} edges`;
-  if(!$('graphDetails').dataset.selected && nodes[0]) selectGraphNode(nodes[0].id);
-}
-function renderRelationCards(nodes, edges, nodeById){
-  const docs = nodes.filter(node => node.type === 'document');
-  const relByDoc = {};
-  for(const doc of docs){
-    relByDoc[doc.id] = {sku:[], alias:[], compatible:[], alternative:[]};
-  }
-  for(const edge of edges){
-    const source = nodeById.get(edge.source);
-    const target = nodeById.get(edge.target);
-    if(!source || !target) continue;
-    if(source.type !== 'document' || !relByDoc[source.id]) continue;
-    if(target.type in relByDoc[source.id]) relByDoc[source.id][target.type].push(target);
-  }
-  const cards = docs.sort((a,b)=>String(a.label).localeCompare(String(b.label),'zh-CN')).map(doc => {
-    const rel = relByDoc[doc.id] || {};
-    const section = (label, type, items) => {
-      if(!items || !items.length) return '';
-      return `<div class="relation-section"><div class="relation-label">${escapeHtml(label)}</div><div class="chip-row">${items.map(item=>`<span class="chip ${type}">${escapeHtml(item.label)}</span>`).join('')}</div></div>`;
-    };
-    return `<div class="relation-card" onclick="selectGraphNode('${q(doc.id)}')">
-      <div class="relation-title">${escapeHtml(doc.label || doc.id)}</div>
-      <div class="relation-path">${escapeHtml(doc.path || '')}</div>
-      ${section('SKU', 'sku', rel.sku)}
-      ${section('别名', 'alias', rel.alias)}
-      ${section('兼容对象', 'compatible', rel.compatible)}
-      ${section('替代方案', 'alternative', rel.alternative)}
-    </div>`;
-  });
-  $('relationCards').innerHTML = cards.join('') || '<div class="empty">没有匹配的业务关系卡片</div>';
-  $('graphMeta').textContent = `${docs.length} docs / ${edges.length} core relations`;
-  if(!$('graphDetails').dataset.selected && docs[0]) selectGraphNode(docs[0].id);
-}
-function renderGraphStats(nodes, edges){
-  const nodeCounts = {};
-  const edgeCounts = {};
-  for(const node of nodes) nodeCounts[node.type || 'unknown'] = (nodeCounts[node.type || 'unknown'] || 0) + 1;
-  for(const edge of edges) edgeCounts[edge.type || 'related'] = (edgeCounts[edge.type || 'related'] || 0) + 1;
-  const nodeRows = Object.entries(nodeCounts).sort((a,b) => graphTypeOrder(a[0]) - graphTypeOrder(b[0])).map(([type,count]) =>
-    listRow(graphTypeLabels[type] || type, `${count} 个节点`, String(count), 'ok')
-  );
-  const edgeRows = Object.entries(edgeCounts).sort((a,b) => String(a[0]).localeCompare(String(b[0]))).map(([type,count]) =>
-    listRow(type, `${count} 条关系`, String(count), 'ok')
-  );
-  $('graphStats').innerHTML = [...nodeRows, ...edgeRows].join('') || '<div class="empty">暂无统计</div>';
-}
-function selectGraphNode(id){
-  if(!graphData) return;
-  const node = (graphData.nodes || []).find(item => item.id === id);
-  if(!node) return;
-  $('graphDetails').dataset.selected = id;
-  $('graphSelectedType').outerHTML = badge('ok', graphTypeLabels[node.type] || node.type || '节点').replace('<span','<span id="graphSelectedType"');
-  const related = (graphData.edges || []).filter(edge => edge.source === id || edge.target === id);
-  const rows = [
-    ['名称', node.label || node.id],
-    ['类型', graphTypeLabels[node.type] || node.type || '-'],
-    ['路径', node.path || '-'],
-    ['领域', node.domain || '-'],
-    ['状态', node.status || '-'],
-    ['关系数', related.length]
-  ];
-  if(node.summary) rows.push(['摘要', node.summary]);
-  $('graphDetails').innerHTML = rows.map(([key,value]) => `<div class="kv-row"><div class="kv-key">${escapeHtml(key)}</div><div class="kv-value">${escapeHtml(value)}</div></div>`).join('');
-}
-async function loadGraph(){
-  $('graphMeta').textContent = '加载中...';
-  try {
-    const data = await getJson('/api/graph');
-    graphData = data;
-    $('graphRaw').textContent = pretty(data);
-    const summary = data.summary || {};
-    $('graphCards').innerHTML = [
-      card('节点', summary.nodes ?? 0, 'business nodes', summary.nodes ? 'ok' : 'warning'),
-      card('关系', summary.edges ?? 0, 'semantic edges', summary.edges ? 'ok' : 'warning'),
-      card('文档', summary.documents ?? 0, 'knowledge docs'),
-      card('领域', summary.domains ?? 0, 'domains'),
-      card('Wiki 双链', summary.wikilinks ?? 0, 'wikilinks')
-    ].join('');
-    $('graphLegend').innerHTML = Object.entries(graphTypeLabels).map(([type,label]) =>
-      `<span class="legend-item"><span class="legend-dot" style="background:${graphColors[type] || '#647084'}"></span>${escapeHtml(label)}</span>`
-    ).join('');
-    $('graphDetails').dataset.selected = '';
-    renderGraph();
-  } catch(e) {
-    $('graphMeta').textContent = '加载失败';
-    $('graphRaw').textContent = String(e.stack || e);
-    $('graphSvg').innerHTML = '<text x="550" y="340" text-anchor="middle" class="graph-label">图谱加载失败</text>';
-  }
 }
 async function loadGaps(){
   const rows=await getJson('/api/gaps');
@@ -1812,141 +1465,6 @@ def _expected_domain_for_path(relative_path: str) -> str | None:
             best_domain = str(domain_id)
             best_len = match_len
     return best_domain
-
-
-def _first_heading(body: str) -> str | None:
-    for line in body.splitlines():
-        text = line.strip()
-        if text.startswith("#"):
-            title = text.lstrip("#").strip()
-            if title:
-                return title
-    return None
-
-
-def _graph_node_id(kind: str, label: str) -> str:
-    normalized = re.sub(r"\s+", " ", str(label).strip()).lower()
-    return f"{kind}:{normalized}"
-
-
-def _add_graph_node(nodes: dict[str, dict[str, Any]], kind: str, label: str, **extra: Any) -> str:
-    clean_label = re.sub(r"\s+", " ", str(label).strip())
-    node_id = extra.pop("id", None) or _graph_node_id(kind, clean_label)
-    if not clean_label:
-        return node_id
-    current = nodes.get(node_id)
-    payload = {
-        "id": node_id,
-        "type": kind,
-        "label": clean_label,
-        **{key: value for key, value in extra.items() if value not in (None, "", [])},
-    }
-    if current:
-        current.update({key: value for key, value in payload.items() if value not in (None, "", [])})
-    else:
-        nodes[node_id] = payload
-    return node_id
-
-
-def _add_graph_edge(edges: list[dict[str, Any]], seen: set[tuple[str, str, str]], source: str, target: str, kind: str) -> None:
-    if not source or not target or source == target:
-        return
-    key = (source, target, kind)
-    if key in seen:
-        return
-    seen.add(key)
-    edges.append({"source": source, "target": target, "type": kind})
-
-
-def _graph_docs() -> list[Path]:
-    docs: list[Path] = []
-    for root in _wiki_knowledge_roots():
-        docs.extend(path for path in root.rglob("*.md") if path.is_file())
-    return sorted(set(docs), key=lambda path: path.relative_to(VAULT_PATH).as_posix())
-
-
-def _graph_doc_id(relative_path: str) -> str:
-    return f"doc:{relative_path}"
-
-
-def _build_graph() -> dict[str, Any]:
-    nodes: dict[str, dict[str, Any]] = {}
-    edges: list[dict[str, Any]] = []
-    seen_edges: set[tuple[str, str, str]] = set()
-    docs = _graph_docs()
-    pages = _wiki_page_candidates()
-    wikilink_count = 0
-
-    def add_document_node(file_path: Path, *, stub: bool = False) -> str:
-        rel = file_path.relative_to(VAULT_PATH).as_posix()
-        raw = file_path.read_text(encoding="utf-8", errors="replace") if file_path.exists() else ""
-        fm, body = _parse_frontmatter(raw)
-        title = str(fm.get("title") or _first_heading(body) or file_path.stem)
-        domain = str(fm.get("domain") or _expected_domain_for_path(rel) or "")
-        return _add_graph_node(
-            nodes,
-            "document",
-            title,
-            id=_graph_doc_id(rel),
-            path=rel,
-            domain=domain,
-            status=fm.get("status"),
-            summary=fm.get("summary"),
-            stub=stub,
-        )
-
-    for file_path in docs:
-        rel = file_path.relative_to(VAULT_PATH).as_posix()
-        raw = file_path.read_text(encoding="utf-8", errors="replace")
-        fm, body = _parse_frontmatter(raw)
-        doc_id = add_document_node(file_path)
-        domain = str(fm.get("domain") or _expected_domain_for_path(rel) or "").strip()
-        if domain:
-            domain_id = _add_graph_node(nodes, "domain", domain)
-            _add_graph_edge(edges, seen_edges, doc_id, domain_id, "belongs_to_domain")
-        for field, node_type, edge_type in GRAPH_FIELD_SPECS:
-            for value in _as_list(fm.get(field)):
-                target_id = _add_graph_node(nodes, node_type, value)
-                _add_graph_edge(edges, seen_edges, doc_id, target_id, edge_type)
-        for link in WIKILINK_RE.findall(body):
-            clean = link.strip()
-            target = pages.get(clean)
-            if not target:
-                continue
-            target_rel = target.relative_to(VAULT_PATH).as_posix()
-            target_id = _graph_doc_id(target_rel)
-            if target_id not in nodes:
-                add_document_node(target, stub=True)
-            _add_graph_edge(edges, seen_edges, doc_id, target_id, "wikilink")
-            wikilink_count += 1
-
-    node_type_counts: dict[str, int] = {}
-    edge_type_counts: dict[str, int] = {}
-    for node in nodes.values():
-        node_type_counts[str(node.get("type") or "unknown")] = node_type_counts.get(str(node.get("type") or "unknown"), 0) + 1
-    for edge in edges:
-        edge_type_counts[str(edge.get("type") or "related")] = edge_type_counts.get(str(edge.get("type") or "related"), 0) + 1
-
-    node_items = sorted(nodes.values(), key=lambda item: (str(item.get("type") or ""), str(item.get("label") or "")))
-    return {
-        "summary": {
-            "documents": sum(1 for item in nodes.values() if item.get("type") == "document"),
-            "domains": node_type_counts.get("domain", 0),
-            "nodes": len(nodes),
-            "edges": len(edges),
-            "wikilinks": wikilink_count,
-            "node_types": node_type_counts,
-            "edge_types": edge_type_counts,
-            "knowledge_roots": [root.relative_to(VAULT_PATH).as_posix() for root in _wiki_knowledge_roots()],
-        },
-        "nodes": node_items,
-        "edges": edges,
-    }
-
-
-@app.get("/api/graph")
-def graph() -> dict[str, Any]:
-    return _jsonable(_build_graph())
 
 
 def _check_updated(value: Any) -> tuple[str, str | None]:
