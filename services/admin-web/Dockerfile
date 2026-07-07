@@ -13,7 +13,8 @@ RUN apt-get update \
 COPY requirements.txt ./requirements.txt
 RUN python -m pip install -r requirements.txt
 
-COPY main.py ./main.py
+COPY *.py ./
+COPY web ./web
 
 EXPOSE 18090
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "18090"]

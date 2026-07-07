@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LLM Wiki Admin</title>
+  <link rel="stylesheet" href="/static/admin.css" />
+</head>
+<body>
+<div class="shell">
+<aside>
+  <div class="brand">
+    <div class="brand-title">LLM Wiki Admin</div>
+    <div class="brand-subtitle">企业知识库管理控制台</div>
+  </div>
+  <nav>
+    <div class="nav-group">总览</div>
+    <button class="active" data-tab="dashboard"><span>仪表盘</span><span class="nav-key">01</span></button>
+    <button data-tab="health"><span>健康检查</span><span class="nav-key">02</span></button>
+    <button data-tab="models"><span>模型配置</span><span class="nav-key">03</span></button>
+    <button data-tab="domains"><span>领域注册表</span><span class="nav-key">04</span></button>
+    <div class="nav-group">知识维护</div>
+    <button data-tab="sync"><span>同步管理</span><span class="nav-key">05</span></button>
+    <button data-tab="knowledgeMap"><span>知识地图</span><span class="nav-key">06</span></button>
+    <button data-tab="docs"><span>文档浏览</span><span class="nav-key">07</span></button>
+    <button data-tab="schema"><span>Schema 模板</span><span class="nav-key">08</span></button>
+    <div class="nav-group">问答质量</div>
+    <button data-tab="rag"><span>RAG 测试</span><span class="nav-key">09</span></button>
+    <button data-tab="gaps"><span>知识缺口</span><span class="nav-key">10</span></button>
+    <button data-tab="audit"><span>审计日志</span><span class="nav-key">11</span></button>
+    <div class="nav-group">工具</div>
+    <button data-tab="obsidian"><span>obsidian-wiki</span><span class="nav-key">12</span></button>
+  </nav>
+</aside>
+<div class="page">
+<header>
+  <div>
+    <div class="header-title" id="pageTitle">仪表盘</div>
+    <div class="header-meta" id="pageMeta">企业正式 Wiki 运行状态</div>
+  </div>
+  <div class="header-right">
+    <span class="badge" id="globalHealth">未检查</span>
+    <span class="muted" id="now"></span>
+  </div>
+</header>
+<main>
+<section id="dashboard" class="active">
+  <div class="section-head">
+    <div><h2>仪表盘</h2><div class="section-desc">系统是否可用、知识是否新鲜、是否有待处理缺口，集中看这里。</div></div>
+    <div class="toolbar"><button class="action" onclick="loadHealth()">运行健康检查</button><button class="action primary" onclick="loadStatus()">刷新状态</button></div>
+  </div>
+  <div class="state-band" id="stateBand">
+    <div>
+      <div class="state-title"><span class="badge" id="stateBadge">未检查</span><span id="stateTitle">等待健康检查</span></div>
+      <div class="state-desc" id="stateDesc">页面加载后会自动检查关键链路。</div>
+    </div>
+    <div class="toolbar"><button class="action" onclick="showTab('health')">查看健康矩阵</button><button class="action" onclick="showTab('rag')">测试问答</button></div>
+  </div>
+  <div id="statusCards" class="grid"></div>
+  <div class="panel" style="margin-top:14px">
+    <div class="panel-head"><strong>系统链路</strong><span class="muted">Postgres -> RAG -> LiteLLM -> Vault -> Sync</span></div>
+    <div class="panel-body"><div class="pipeline" id="systemPipeline"></div></div>
+  </div>
+  <div class="dashboard-grid" style="margin-top:14px">
+    <div class="panel">
+      <div class="panel-head"><strong>知识状态</strong><span id="qualityBadge" class="badge">unknown</span></div>
+      <div class="panel-body"><div class="list" id="knowledgeList"></div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><strong>待处理</strong><span class="muted">优先看 open gaps</span></div>
+      <div class="panel-body"><div class="list" id="workList"></div></div>
+    </div>
+  </div>
+  <details class="raw"><summary>调试详情</summary><div class="two-col"><div class="panel"><div class="panel-head"><strong>同步状态</strong><span id="syncBadge" class="badge">unknown</span></div><div class="panel-body"><pre id="syncRaw">loading...</pre></div></div><div class="panel"><div class="panel-head"><strong>原始状态</strong><span class="muted">/api/status</span></div><div class="panel-body"><pre id="statusRaw">loading...</pre></div></div></div></details>
+</section>
+<section id="models">
+  <div class="section-head">
+    <div><h2>模型配置</h2><div class="section-desc">从 LiteLLM 读取可用模型，配置正式 Wiki/RAG 服务使用的 chat 和 rerank 模型。Hermes 自身模型不在这里管理。</div></div>
+    <div class="toolbar"><button class="action" onclick="loadModelConfig()">刷新模型</button><button class="action primary" onclick="saveModelConfig()">保存配置</button></div>
+  </div>
+  <div class="grid" id="modelCards" style="margin-bottom:14px"></div>
+  <div class="panel">
+    <div class="panel-head"><strong>RAG 模型选择</strong><span id="modelSaveState" class="muted">未保存</span></div>
+    <div class="panel-body">
+      <div class="form-grid">
+        <div class="field">
+          <label for="chatModel">回答模型</label>
+          <select id="chatModel"></select>
+          <div class="field-help">用于 `/rag/answer` 生成最终五段式答案。</div>
+        </div>
+        <div class="field">
+          <label for="rerankerModel">Rerank 模型</label>
+          <select id="rerankerModel"></select>
+          <div class="field-help">用于候选文档重排，影响命中顺序和可回答判定。</div>
+        </div>
+        <div class="field">
+          <label for="embeddingModel">Embedding 模型</label>
+          <select id="embeddingModel" disabled></select>
+          <div class="field-help">当前只展示不开放保存；切换 embedding 需要重新嵌入全部文档。</div>
+        </div>
+      </div>
+      <div class="notice" style="margin-top:14px">保存后会写入共享配置文件，新请求会立即读取；不需要修改 Hermes 配置，也不需要重建镜像。</div>
+    </div>
+  </div>
+  <details class="raw"><summary>调试详情</summary><div class="panel"><div class="panel-body"><pre id="modelConfigRaw">等待加载...</pre></div></div></details>
+</section>
+<section id="domains">
+  <div class="section-head">
+    <div><h2>领域注册表</h2><div class="section-desc">统一记录不同知识领域的 profile、Vault 子路径、RAG 入口、同步状态和向量 collection。第一版只读展示，不改变当前问答路由。</div></div>
+    <div class="toolbar"><button class="action primary" onclick="loadDomains()">刷新注册表</button></div>
+  </div>
+  <div id="domainCards" class="grid" style="margin-bottom:14px"></div>
+  <div class="panel">
+    <div class="panel-head"><strong>领域列表</strong><span id="domainRegistryPath" class="muted"></span></div>
+    <div class="panel-body"><div id="domainList" class="task-list"></div></div>
+  </div>
+  <div class="panel" style="margin-top:14px">
+    <div class="panel-head"><strong>校验结果</strong><span id="domainIssueCount" class="badge">等待</span></div>
+    <div class="panel-body"><div id="domainIssues"></div></div>
+  </div>
+  <details class="raw"><summary>调试详情</summary><div class="panel"><div class="panel-body"><pre id="domainsRaw">等待加载...</pre></div></div></details>
+</section>
+<section id="sync">
+  <div class="section-head">
+    <div><h2>同步管理</h2><div class="section-desc">手动拉取 Vault 仓库并刷新 RAG 索引。</div></div>
+    <div class="toolbar"><button class="action" onclick="runAction('/api/git-pull')">Git Pull</button><button class="action" onclick="runAction('/api/sync-index')">重新索引</button><button class="action primary" onclick="runAction('/api/full-sync')">Git Pull + 重新索引</button></div>
+  </div>
+  <div class="panel"><div class="panel-head"><strong>执行结果</strong><span class="muted">最长等待 900 秒</span></div><div class="panel-body"><pre id="actionLog">等待操作...</pre></div></div>
+</section>
+<section id="knowledgeMap">
+  <div class="section-head">
+    <div><h2>知识地图</h2><div class="section-desc">基于 Markdown 路径、frontmatter、双链和索引生成的轻量知识图谱。它只展示知识结构和显式关系，不展示知识缺口或治理建议。</div></div>
+    <div class="toolbar"><button class="action primary" onclick="loadKnowledgeMap()">刷新地图</button></div>
+  </div>
+  <div id="knowledgeMapCards" class="grid" style="margin-bottom:14px"></div>
+  <div class="panel" style="margin-bottom:14px">
+    <div class="panel-head"><strong>设计边界</strong><span class="muted">依据 Markdown 显式信息</span></div>
+    <div class="panel-body"><div id="knowledgeMapPolicy" class="map-policy"></div></div>
+  </div>
+  <div class="panel" style="margin-bottom:14px">
+    <div class="panel-head">
+      <strong>可视化图谱</strong>
+      <div class="toolbar">
+        <button class="action graph-mode active" id="graphModeProduct" onclick="setKnowledgeGraphMode('product')">产品关系图</button>
+        <button class="action graph-mode" id="graphModeStructure" onclick="setKnowledgeGraphMode('structure')">结构图</button>
+      </div>
+    </div>
+    <div class="panel-body">
+      <div class="graph-shell"><svg id="knowledgeGraphSvg" class="knowledge-graph" viewBox="0 0 1100 520" role="img" aria-label="知识图谱可视化"></svg></div>
+      <div class="graph-legend" style="margin-top:10px">
+        <span><i class="legend-dot" style="background:#eef4ff;border-color:#8cb1ff"></i>产品/SKU</span>
+        <span><i class="legend-dot" style="background:#fff"></i>Markdown 文档</span>
+        <span><i class="legend-dot" style="background:#f8fafc"></i>目录</span>
+        <span><i class="legend-dot" style="background:#e7f6ee;border-color:#9dd7b6"></i>领域</span>
+        <span>线条只表示 Markdown/frontmatter 中的明确关系</span>
+      </div>
+    </div>
+  </div>
+  <div class="map-layout">
+    <div class="stack">
+      <div class="panel">
+        <div class="panel-head"><strong>产品 / SKU 地图</strong><span id="productCount" class="muted">0</span></div>
+        <div class="panel-body"><div id="productMapList" class="map-list"></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><strong>目录结构</strong><span id="folderCount" class="muted">0</span></div>
+        <div class="panel-body"><div id="folderMapList" class="map-list"></div></div>
+      </div>
+    </div>
+    <div class="stack">
+      <div class="panel">
+        <div class="panel-head"><strong id="mapFocusTitle">选择一个产品查看详情</strong><span id="mapFocusBadge" class="badge">等待</span></div>
+        <div class="panel-body"><div id="mapFocusDetail" class="empty">左侧选择 SKU 后显示 aliases、兼容对象、替代方案、限制条件和文档来源。</div></div>
+      </div>
+      <details class="raw"><summary>调试详情</summary><div class="panel"><div class="panel-body"><pre id="knowledgeMapRaw">等待加载...</pre></div></div></details>
+    </div>
+  </div>
+</section>
+<section id="rag">
+  <div class="section-head">
+    <div><h2>RAG 测试</h2><div class="section-desc">直接调用正式 Wiki 问答接口，检查检索、rerank 和答案约束。</div></div>
+  </div>
+  <div class="rag-layout">
+    <div class="stack">
+      <div class="panel">
+        <div class="panel-head"><strong>测试问题</strong><span class="muted">正式 Wiki 来源约束</span></div>
+        <div class="panel-body">
+          <textarea id="query" placeholder="输入要测试的问题，例如：FTLC4353RHPL对应我司哪个型号，使用场景是什么？"></textarea>
+          <div class="toolbar" style="margin-top:10px"><button class="action primary" onclick="testRag()">测试 RAG</button></div>
+          <div class="quick-list">
+            <button class="quick-btn" onclick="setQuery('FTLC4353RHPL对应我司哪个型号，使用场景是什么？')">FTLC4353RHPL 对应型号和场景</button>
+            <button class="quick-btn" onclick="setQuery('OSFP-QDD-CU3可以用于CX7 NIC互连吗？')">OSFP-QDD-CU3 与 CX7 NIC</button>
+            <button class="quick-btn" onclick="setQuery('火星基地的咖啡机采购型号是什么？')">未命中保护测试</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><strong>判定</strong><span id="ragBadge" class="badge">等待</span></div>
+        <div class="panel-body"><div id="ragMeta" class="answer-meta"></div></div>
+      </div>
+    </div>
+    <div class="stack">
+      <div class="panel">
+        <div class="panel-head"><strong>答案预览</strong><span class="muted">final_answer</span></div>
+        <div class="panel-body"><div id="ragAnswer" class="answer-box muted">等待查询...</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><strong>引用来源</strong><span id="citationCount" class="muted">0</span></div>
+        <div class="panel-body"><div id="ragCitations" class="citation-list"></div></div>
+      </div>
+      <details class="raw"><summary>调试详情</summary><div class="panel"><div class="panel-body"><pre id="ragResult">等待查询...</pre></div></div></details>
+    </div>
+  </div>
+</section>
+<section id="docs">
+  <div class="section-head">
+    <div><h2>文档浏览</h2><div class="section-desc">只读浏览远端 Vault 中的 Markdown 文件。</div></div>
+  </div>
+  <div class="docs-layout">
+    <div class="panel"><div class="panel-head"><strong>Vault 文件</strong><button class="action" onclick="loadFiles('.')">根目录</button></div><div class="panel-body"><div id="files" class="file-list">loading...</div></div></div>
+    <div class="panel"><div class="panel-head"><strong id="docTitle">选择 Markdown 文件预览</strong><span id="docPath" class="muted"></span></div><div class="panel-body"><pre id="docPreview" class="doc-text"></pre></div></div>
+    <div class="panel"><div class="panel-head"><strong>Frontmatter</strong><span id="docStatus" class="badge">等待</span></div><div class="panel-body"><div id="docMeta" class="kv"><div class="empty">选择文档后显示元数据</div></div></div></div>
+  </div>
+</section>
+<section id="gaps">
+  <div class="section-head">
+    <div><h2>知识缺口</h2><div class="section-desc">正式 Wiki 无法回答的问题会记录在这里，后续用于补充 Markdown。</div></div>
+    <div class="toolbar"><button class="action primary" onclick="loadGaps()">刷新</button></div>
+  </div>
+  <div id="gapsSummary" class="grid" style="margin-bottom:14px"></div>
+  <div id="gapsTable"></div>
+</section>
+<section id="audit">
+  <div class="section-head">
+    <div><h2>审计日志</h2><div class="section-desc">查看最近问答请求、可回答性和引用来源。</div></div>
+    <div class="toolbar"><button class="action primary" onclick="loadAudit()">刷新</button></div>
+  </div>
+  <div id="auditSummary" class="grid" style="margin-bottom:14px"></div>
+  <div id="auditTable"></div>
+</section>
+<section id="health">
+  <div class="section-head">
+    <div><h2>健康检查</h2><div class="section-desc">聚合检查 Postgres、RAG、LiteLLM、Vault Git、同步器、Wiki 质量和 obsidian-wiki。</div></div>
+    <div class="toolbar"><button class="action primary" onclick="loadHealth()">运行健康检查</button></div>
+  </div>
+  <div id="healthSummary" class="grid"></div>
+  <div class="panel" style="margin-top:14px"><div class="panel-head"><strong>检查项</strong><span id="healthCheckedAt" class="muted"></span></div><div class="panel-body"><div id="healthRows" class="health-list"></div></div></div>
+  <details class="raw"><summary>调试详情</summary><div class="panel"><div class="panel-head"><strong>原始详情</strong><span class="muted">/api/health-detail</span></div><div class="panel-body"><pre id="healthResult">等待检查...</pre></div></div></details>
+</section>
+<section id="schema">
+  <div class="section-head">
+    <div><h2>Schema 模板</h2><div class="section-desc">查看当前 Wiki frontmatter 规范和模板。</div></div>
+    <div class="toolbar"><button class="action primary" onclick="loadSchema()">刷新模板</button></div>
+  </div>
+  <div class="panel"><div class="panel-body"><pre id="schemaTemplate">等待加载...</pre></div></div>
+</section>
+<section id="obsidian">
+  <div class="section-head">
+    <div><h2>obsidian-wiki</h2><div class="section-desc">检查容器内 obsidian-wiki 安装状态和 Vault 配置。</div></div>
+    <div class="toolbar"><button class="action primary" onclick="loadObsidianWiki()">检测 obsidian-wiki</button></div>
+  </div>
+  <div class="panel"><div class="panel-body"><pre id="obsidianInfo">等待检测...</pre></div></div>
+</section>
+</main>
+</div>
+</div>
+<script src="/static/admin.js"></script>
+</body>
+</html>
