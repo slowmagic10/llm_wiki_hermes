@@ -28,13 +28,14 @@
 4. 知识更新只通过人工修改 Markdown 文件完成。
 5. RAG 服务每天自动从 Obsidian Vault 同步索引。
 6. RAG 服务解析 Obsidian 的 frontmatter、tags、双链、标题层级和文件路径。
-7. 检索使用 Postgres + pgvector + FTS。
+7. 检索使用 Postgres 元数据 + Milvus 向量检索 + FTS，pgvector 可作为早期或轻量部署的备选。
 8. 检索结果通过 0.6B reranker 重排并进行可回答性门控。
 9. Hermes 对知识类问题必须基于 RAG 来源回答。
 10. 无可靠来源时不回答问题本身，只在系统侧记录知识缺口。
 11. 第一版默认输出内部答案，不生成客户可直接发送话术。
 12. 所有组件优先支持 Docker 部署。
 13. 使用 `ar9av/obsidian-wiki` 作为 Obsidian Wiki 离线维护工具集。
+14. 提供 Admin Web 用于健康检查、同步管理、文档浏览、模型配置、RAG 测试和知识图谱可视化。
 
 ## 4. 非目标
 
@@ -42,16 +43,14 @@
 
 1. 不使用 Dify 作为对话入口。
 2. 不使用 RAGFlow 作为主 RAG 系统。
-3. 不引入 Qdrant、OpenSearch、Milvus。
-4. 不做知识图谱。
-5. 不做自动关系抽取。
-6. 不做历史版本管理。
-7. 不做管理 UI。
-8. 不做复杂多用户权限。
-9. 不让 Hermes 自动写入 Obsidian。
-10. 不让 Hermes 使用 web/browser/terminal/file write/长期 memory 回答该业务场景。
-11. 不把 `obsidian-wiki` 放入实时问答链路。
-12. 不让 `obsidian-wiki` 自动改写正式知识；第一版只输出维护建议，由人工修改 Markdown。
+3. 不做独立大型图数据库系统。
+4. 不做自动关系抽取；知识图谱只展示 Markdown 路径、frontmatter、双链和索引元数据中的显式关系。
+5. 不做历史版本管理。
+6. 不做复杂多用户权限。
+7. 不让 Hermes 自动写入 Obsidian。
+8. 不让 Hermes 使用 web/browser/terminal/file write/长期 memory 回答该业务场景。
+9. 不把 `obsidian-wiki` 放入实时问答链路。
+10. 不让 `obsidian-wiki` 自动改写正式知识；第一版只输出维护建议，由人工修改 Markdown。
 
 ## 5. 总体架构
 

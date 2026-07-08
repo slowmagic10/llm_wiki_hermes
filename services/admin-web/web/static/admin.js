@@ -279,6 +279,17 @@ function docByPath(data){
   for(const doc of data.documents || []) map[doc.path] = doc;
   return map;
 }
+function graphNodeMap(data){
+  const map = {};
+  for(const node of data.nodes || []) map[node.id] = node;
+  return map;
+}
+function graphNodes(data, type){
+  return (data.nodes || []).filter(node => node.type === type);
+}
+function graphEdges(data, type){
+  return (data.edges || []).filter(edge => edge.type === type);
+}
 function setKnowledgeGraphMode(mode){
   knowledgeGraphMode = mode;
   document.querySelectorAll('.graph-mode').forEach(btn=>btn.classList.remove('active'));
@@ -297,9 +308,78 @@ function renderKnowledgeGraph(){
   }
 }
 function renderProductGraph(data, svg){
+  if(!(data.nodes || []).length || !(data.edges || []).length){
+    return renderLegacyProductGraph(data, svg);
+  }
+  const nodeMap = graphNodeMap(data);
+  const mentionEdges = graphEdges(data, 'MENTIONS_SKU');
+  const productIds = [...new Set(mentionEdges.map(edge => edge.target))].filter(id => nodeMap[id]);
+  const docIds = [...new Set(mentionEdges.map(edge => edge.source))].filter(id => nodeMap[id]);
+  const productH = 48;
+  const docH = 48;
+  const gap = 14;
+  const height = Math.max(520, 86 + Math.max(productIds.length * (productH + gap), docIds.length * (docH + gap)));
+  const productX = 58;
+  const docX = 760;
+  const productY = 62;
+  const docY = 62;
+  const productPos = {};
+  const docPos = {};
+  let edges = '';
+  let nodes = '';
+  productIds.forEach((id, index) => {
+    productPos[id] = {x:productX, y:productY + index * (productH + gap), w:270, h:productH};
+  });
+  docIds.forEach((id, index) => {
+    docPos[id] = {x:docX, y:docY + index * (docH + gap), w:285, h:docH};
+  });
+  mentionEdges.forEach(edge => {
+    const product = productPos[edge.target];
+    const doc = docPos[edge.source];
+    if(!product || !doc) return;
+    const productNode = nodeMap[edge.target];
+    const strong = knowledgeGraphFocusSku && productNode?.label === knowledgeGraphFocusSku;
+    edges += edgeSvg(product.x + product.w, product.y + product.h/2, doc.x, doc.y + doc.h/2, strong);
+  });
+  productIds.forEach((id) => {
+    const product = nodeMap[id];
+    const pos = productPos[id];
+    const focused = knowledgeGraphFocusSku === product.label;
+    const dim = knowledgeGraphFocusSku && !focused;
+    const relatedDocs = mentionEdges.filter(edge => edge.target === id).length;
+    const legacyIndex = (data.products || []).findIndex(item => item.sku === product.label);
+    nodes += nodeSvg({
+      ...pos,
+      label: product.label,
+      sub: `docs ${relatedDocs} · ${product.metadata?.domain || '-'}`,
+      type:'product',
+      focus: focused,
+      dim,
+      onclick: legacyIndex >= 0 ? `renderProductFocus(${legacyIndex})` : ''
+    });
+  });
+  docIds.forEach((id) => {
+    const doc = nodeMap[id];
+    const pos = docPos[id];
+    const related = mentionEdges.some(edge => edge.source === id && nodeMap[edge.target]?.label === knowledgeGraphFocusSku);
+    const dim = knowledgeGraphFocusSku && !related;
+    nodes += nodeSvg({
+      ...pos,
+      label: doc.label,
+      sub: `${doc.metadata?.chunks || 0} chunks · ${doc.metadata?.status || '-'}`,
+      type:'document',
+      focus: related,
+      dim
+    });
+  });
+  svg.setAttribute('viewBox', `0 0 1100 ${height}`);
+  svg.innerHTML = `<text x="58" y="32" fill="#647084" font-size="12" font-weight="700">产品 / SKU</text>
+    <text x="760" y="32" fill="#647084" font-size="12" font-weight="700">Markdown 文档</text>
+    ${edges}${nodes}`;
+}
+function renderLegacyProductGraph(data, svg){
   const products = data.products || [];
   const docs = data.documents || [];
-  const docMap = docByPath(data);
   const productH = 48;
   const docH = 48;
   const gap = 14;
@@ -356,6 +436,61 @@ function renderProductGraph(data, svg){
     ${edges}${nodes}`;
 }
 function renderStructureGraph(data, svg){
+  if(!(data.nodes || []).length || !(data.edges || []).length){
+    return renderLegacyStructureGraph(data, svg);
+  }
+  const nodeMap = graphNodeMap(data);
+  const domains = graphNodes(data, 'Domain');
+  const folders = graphNodes(data, 'Folder');
+  const docs = graphNodes(data, 'Document');
+  const domainH = 48;
+  const folderH = 48;
+  const docH = 48;
+  const gap = 14;
+  const height = Math.max(520, 86 + Math.max(domains.length * (domainH + gap), folders.length * (folderH + gap), docs.length * (docH + gap)));
+  const domainPos = {};
+  const folderPos = {};
+  const docPos = {};
+  let edges = '';
+  let nodes = '';
+  domains.forEach((domain, index) => {
+    domainPos[domain.id] = {x:58, y:74 + index * (domainH + gap), w:190, h:domainH};
+  });
+  folders.forEach((folder, index) => {
+    folderPos[folder.id] = {x:360, y:74 + index * (folderH + gap), w:250, h:folderH};
+  });
+  docs.forEach((doc, index) => {
+    docPos[doc.id] = {x:760, y:56 + index * (docH + gap), w:285, h:docH};
+  });
+  graphEdges(data, 'FOLDER_IN_DOMAIN').forEach(edge => {
+    const folder = folderPos[edge.source];
+    const domain = domainPos[edge.target];
+    if(domain && folder) edges += edgeSvg(domain.x + domain.w, domain.y + domain.h/2, folder.x, folder.y + folder.h/2, true);
+  });
+  graphEdges(data, 'IN_FOLDER').forEach(edge => {
+    const doc = docPos[edge.source];
+    const folder = folderPos[edge.target];
+    if(folder && doc) edges += edgeSvg(folder.x + folder.w, folder.y + folder.h/2, doc.x, doc.y + doc.h/2, false);
+  });
+  domains.forEach(domain => {
+    const pos = domainPos[domain.id];
+    nodes += nodeSvg({...pos, label:domain.label, sub:`docs ${domain.metadata?.documents || 0}`, type:'domain'});
+  });
+  folders.forEach(folder => {
+    const pos = folderPos[folder.id];
+    nodes += nodeSvg({...pos, label:folder.label, sub:`docs ${folder.metadata?.documents || 0} · ${folder.metadata?.domain || '-'}`, type:'folder'});
+  });
+  docs.forEach(doc => {
+    const pos = docPos[doc.id];
+    nodes += nodeSvg({...pos, label:doc.label, sub:`${doc.metadata?.chunks || 0} chunks · ${doc.metadata?.status || '-'}`, type:'document'});
+  });
+  svg.setAttribute('viewBox', `0 0 1100 ${height}`);
+  svg.innerHTML = `<text x="58" y="32" fill="#647084" font-size="12" font-weight="700">领域</text>
+    <text x="360" y="32" fill="#647084" font-size="12" font-weight="700">目录</text>
+    <text x="760" y="32" fill="#647084" font-size="12" font-weight="700">Markdown 文档</text>
+    ${edges}${nodes}`;
+}
+function renderLegacyStructureGraph(data, svg){
   const domains = data.domains || [];
   const folders = data.folders || [];
   const docs = data.documents || [];
@@ -441,6 +576,8 @@ async function loadKnowledgeMap(){
   $('knowledgeMapCards').innerHTML = [
     card('文档', s.documents ?? 0, 'documents'),
     card('Chunks', s.chunks ?? 0, 'indexed chunks'),
+    card('图谱节点', s.nodes ?? 0, 'nodes'),
+    card('图谱关系', s.edges ?? 0, 'edges'),
     card('产品 / SKU', s.products ?? 0, 'frontmatter sku'),
     card('领域', s.domains ?? 0, 'domains'),
     card('目录', s.folders ?? 0, 'folders'),
