@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from config import INDEX_HTML, MODEL_SETTINGS_PATH, WEB_DIR
+from document_rewriter_service import rewrite_document
 from domains_service import domain_registry_status
 from files_service import file_preview as get_file_preview
 from files_service import list_files, schema_template as get_schema_template
@@ -21,6 +22,7 @@ from model_settings import (
     write_model_settings,
 )
 from obsidian_service import obsidian_wiki as get_obsidian_wiki
+from pdf_import_service import extract_pdf as extract_pdf_upload
 from qa_service import audit as get_audit
 from qa_service import gaps as get_gaps
 from rag_service import answer as rag_answer
@@ -42,6 +44,14 @@ class QueryRequest(BaseModel):
 class ModelConfigRequest(BaseModel):
     chat_model: str
     reranker_model: str
+
+
+class RewriteDocumentRequest(BaseModel):
+    raw_markdown: str
+    domain: str = "default"
+    profile: str = "product"
+    doc_type: str = "product_note"
+    owner: str = "nick"
 
 
 def read_index_html() -> str:
@@ -145,6 +155,22 @@ def full_sync() -> dict[str, Any]:
 @app.post("/api/rag-test")
 async def rag_test(request: QueryRequest) -> dict[str, Any]:
     return await rag_answer(request.query)
+
+
+@app.post("/api/rewrite-document")
+async def rewrite_document_api(request: RewriteDocumentRequest) -> dict[str, Any]:
+    return await rewrite_document(
+        raw_markdown=request.raw_markdown,
+        domain=request.domain.strip() or "default",
+        profile=request.profile.strip() or "product",
+        doc_type=request.doc_type.strip() or "product_note",
+        owner=request.owner.strip() or "nick",
+    )
+
+
+@app.post("/api/extract-pdf")
+async def extract_pdf(file: UploadFile) -> dict[str, Any]:
+    return await extract_pdf_upload(file)
 
 
 @app.get("/api/files")

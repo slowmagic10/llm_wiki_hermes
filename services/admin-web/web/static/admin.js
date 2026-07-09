@@ -7,6 +7,7 @@ const pageInfo = {
   knowledgeMap:['知识地图','Wiki 结构和显式关系可视化'],
   rag:['RAG 测试','正式 Wiki 问答链路验证'],
   docs:['文档浏览','远端 Vault Markdown 只读浏览'],
+  rewrite:['文档入库','Markdown 标准化草稿和缺口报告'],
   gaps:['知识缺口','未命中问题和补充线索'],
   audit:['审计日志','最近问答请求和来源记录'],
   health:['健康检查','系统依赖与知识质量检查'],
@@ -257,6 +258,7 @@ async function loadDomains(){
 let knowledgeMapState = null;
 let knowledgeGraphMode = 'product';
 let knowledgeGraphFocusSku = null;
+let rewriteDraft = '';
 function shortLabel(value, limit=28){
   const text = String(value || '-');
   return text.length > limit ? text.slice(0, limit - 1) + '…' : text;
@@ -650,6 +652,133 @@ async function testRag(){
     $('ragAnswer').textContent=String(e.stack||e);
     $('ragResult').textContent=String(e.stack||e);
   }
+}
+function renderRewriteReport(data){
+  const report = data.review_report || {};
+  const validation = data.validation || {};
+  const missing = report.missing_fields || validation.missing_required_fields || [];
+  const uncertain = report.uncertain_claims || [];
+  const questions = report.suggested_questions || [];
+  const removed = report.removed_irrelevant_content || [];
+  const notes = report.notes || [];
+  const status = validation.ok ? 'ok' : 'warning';
+  $('rewriteStatus').outerHTML = badge(status, validation.ok ? '草稿校验通过' : '需要确认').replace('<span','<span id="rewriteStatus"');
+  const block = (title, items, empty) => `<div class="map-field"><div class="map-field-label">${escapeHtml(title)}</div>${
+    items && items.length ? `<div class="task-list">${items.map(item=>`<div class="citation"><div class="citation-title">${escapeHtml(String(item))}</div></div>`).join('')}</div>` : `<span class="muted">${escapeHtml(empty)}</span>`
+  }</div>`;
+  $('rewriteReport').className = '';
+  $('rewriteReport').innerHTML = [
+    `<div class="map-field"><div class="map-field-label">建议路径</div><div class="citation"><div class="citation-title">${escapeHtml(report.suggested_path || '未生成')}</div></div></div>`,
+    `<div class="map-field"><div class="map-field-label">转正式状态</div>${badge('warning', '永远需要人工确认')}</div>`,
+    block('缺失字段', missing, '未检测到必填字段缺失'),
+    block('待确认事实', uncertain, '未列出不确定事实'),
+    block('建议追问', questions, '未生成建议问题'),
+    block('已清洗内容', removed, '未清洗明显噪声'),
+    block('备注', notes, '无额外备注'),
+    block('校验错误', validation.errors || [], '无'),
+    block('校验警告', validation.warnings || [], '无')
+  ].join('');
+}
+async function rewriteDocument(){
+  const raw = $('rewriteInput').value.trim();
+  if(!raw){
+    $('rewriteOutput').textContent = '请先粘贴原始 Markdown 或产品说明。';
+    return;
+  }
+  $('rewriteStatus').outerHTML = badge('warning','生成中').replace('<span','<span id="rewriteStatus"');
+  $('rewriteOutput').textContent = '生成中...';
+  $('rewriteRaw').textContent = 'requesting...';
+  try{
+    const data = await getJson('/api/rewrite-document', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        raw_markdown: raw,
+        domain: $('rewriteDomain').value.trim() || 'default',
+        profile: $('rewriteProfile').value.trim() || 'product',
+        doc_type: $('rewriteType').value,
+        owner: $('rewriteOwner').value.trim() || 'nick'
+      })
+    });
+    rewriteDraft = data.rewritten_markdown || '';
+    $('rewriteOutput').textContent = rewriteDraft || '未生成草稿';
+    $('rewriteRaw').textContent = pretty(data);
+    renderRewriteReport(data);
+  } catch(e) {
+    $('rewriteStatus').outerHTML = badge('failed','失败').replace('<span','<span id="rewriteStatus"');
+    $('rewriteOutput').textContent = String(e.stack || e);
+    $('rewriteRaw').textContent = String(e.stack || e);
+  }
+}
+function renderPdfExtractReport(data){
+  const warnings = data.warnings || [];
+  $('pdfExtractReport').className = '';
+  $('pdfExtractReport').innerHTML = [
+    `<div class="map-field"><div class="map-field-label">文件</div><div class="citation"><div class="citation-title">${escapeHtml(data.filename || '-')}</div><div class="citation-sub">pages=${escapeHtml(data.pages ?? '-')} · extracted=${escapeHtml(data.extracted_pages ?? '-')} · chars=${escapeHtml(data.total_text_chars ?? 0)}</div></div></div>`,
+    `<div class="map-field"><div class="map-field-label">是否适合重写</div>${badge(data.can_rewrite ? 'ok' : 'warning', data.can_rewrite ? '可以生成草稿' : '文本过少，建议人工检查')}</div>`,
+    `<div class="map-field"><div class="map-field-label">页面字符数</div><div class="task-meta">${(data.page_summaries || []).map(item=>`<span>P${escapeHtml(item.page)}=${escapeHtml(item.chars)}</span>`).join('') || '<span>无</span>'}</div></div>`,
+    `<div class="map-field"><div class="map-field-label">告警</div>${warnings.length ? warnings.map(item=>`<div class="citation"><div class="citation-title">${escapeHtml(item)}</div></div>`).join('') : '<span class="muted">无</span>'}</div>`
+  ].join('');
+}
+async function extractPdfText(){
+  const input = $('pdfInput');
+  const file = input?.files?.[0];
+  if(!file){
+    $('pdfExtractState').textContent = '请先选择 PDF 文件';
+    return;
+  }
+  $('pdfExtractState').textContent = '抽取中...';
+  $('pdfExtractReport').className = 'empty';
+  $('pdfExtractReport').textContent = '抽取中...';
+  const form = new FormData();
+  form.append('file', file);
+  try{
+    const data = await getJson('/api/extract-pdf', { method:'POST', body:form });
+    $('pdfExtractState').textContent = `已抽取 ${data.total_text_chars || 0} 字符`;
+    $('rewriteInput').value = data.extracted_markdown || '';
+    renderPdfExtractReport(data);
+  } catch(e) {
+    $('pdfExtractState').textContent = '抽取失败';
+    $('pdfExtractReport').className = 'empty';
+    $('pdfExtractReport').textContent = String(e.stack || e);
+  }
+}
+function clearRewriteDocument(){
+  $('rewriteInput').value = '';
+  if($('pdfInput')) $('pdfInput').value = '';
+  rewriteDraft = '';
+  $('rewriteOutput').textContent = '等待生成...';
+  $('rewriteRaw').textContent = '等待生成...';
+  $('rewriteReport').className = 'empty';
+  $('rewriteReport').textContent = '生成草稿后显示缺失字段、待确认问题和建议路径。';
+  $('pdfExtractReport').className = 'empty';
+  $('pdfExtractReport').textContent = '上传文本型 PDF 后显示页数、字符数和告警。';
+  $('pdfExtractState').textContent = '仅支持文本型 PDF，不做 OCR';
+  $('rewriteStatus').outerHTML = badge('', '等待').replace('<span','<span id="rewriteStatus"');
+}
+async function copyRewriteDraft(){
+  if(!rewriteDraft) return;
+  try {
+    await navigator.clipboard.writeText(rewriteDraft);
+    $('rewriteStatus').outerHTML = badge('ok','已复制').replace('<span','<span id="rewriteStatus"');
+  } catch(e) {
+    $('rewriteStatus').outerHTML = badge('warning','复制失败').replace('<span','<span id="rewriteStatus"');
+  }
+}
+function downloadRewriteDraft(){
+  if(!rewriteDraft) return;
+  const parsed = parseFrontmatter(rewriteDraft);
+  const title = parsed.meta?.title || 'draft';
+  const safeName = String(title).replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80) || 'draft';
+  const blob = new Blob([rewriteDraft], {type:'text/markdown;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${safeName}.md`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 async function loadFiles(path='.'){
   const data=await getJson('/api/files?path='+encodeURIComponent(path));

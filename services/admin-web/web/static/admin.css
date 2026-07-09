@@ -233,6 +233,10 @@
     tbody tr:hover td { background:#fbfcfe; }
     .split { display:grid; grid-template-columns:minmax(260px,340px) 1fr; gap:14px; }
     .docs-layout { display:grid; grid-template-columns:minmax(250px,320px) minmax(420px,1fr) minmax(260px,340px); gap:14px; align-items:start; }
+    .rewrite-layout { display:grid; grid-template-columns:minmax(360px,.85fr) 1.15fr; gap:14px; align-items:start; }
+    .pdf-upload-row { display:grid; grid-template-columns:minmax(220px,1fr) auto auto; gap:8px; align-items:center; margin-bottom:12px; }
+    .rewrite-input { min-height:420px; }
+    .rewrite-output { min-height:520px; max-height:720px; }
     .file-list { display:grid; gap:3px; }
     .file-list a {
       display:flex;
@@ -344,7 +348,8 @@
       .nav-key { display:none; }
       header { position:relative; }
       section { padding:18px; }
-      .split, .two-col, .dashboard-grid, .pipeline, .rag-layout, .answer-meta, .docs-layout, .map-layout { grid-template-columns:1fr; }
+      .split, .two-col, .dashboard-grid, .pipeline, .rag-layout, .answer-meta, .docs-layout, .rewrite-layout, .map-layout { grid-template-columns:1fr; }
+      .pdf-upload-row { grid-template-columns:1fr; }
       .state-band { grid-template-columns:1fr; }
       .node::after { display:none; }
       .health-row { grid-template-columns:1fr; gap:8px; }

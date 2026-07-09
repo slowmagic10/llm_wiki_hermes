@@ -12,6 +12,7 @@ RUN apt-get update \
 
 COPY requirements.txt ./requirements.txt
 RUN python -m pip install -r requirements.txt
+RUN python -m pip install python-multipart==0.0.20 pypdf
 
 COPY *.py ./
 COPY web ./web

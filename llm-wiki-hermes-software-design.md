@@ -1345,3 +1345,133 @@ hr profile:
 9. 不做模型通用建议入口。
 
 当前阶段只把上述原则写入设计文档和待办，保证当前通用第一版稳定运行。
+
+## 23. 文档标准化入库助手
+
+### 23.1 定位
+
+文档标准化入库助手用于把粗糙 Markdown、产品说明或售前资料整理成符合 Wiki schema 的草稿。
+
+它属于管理侧维护功能，不属于正式问答链路：
+
+```text
+原始 Markdown / 产品说明
+        ↓
+Admin Web 文档入库
+        ↓
+确定性预清洗
+        ↓
+LiteLLM 单次重写
+        ↓
+标准 Markdown 草稿 + 缺口报告
+        ↓
+人工确认
+```
+
+### 23.2 第一版边界
+
+第一版只生成预览，不写入 Vault：
+
+1. 不调用 Hermes。
+2. 不依赖 skill。
+3. 不自动写入正式 Wiki。
+4. 不覆盖已有 Markdown。
+5. 不触发 Git commit。
+6. 不触发重新索引。
+7. 不把粗糙资料直接变成 active 知识。
+
+文档入库会在模型重写前做确定性预清洗，只移除明显不属于产品知识主体的内容：
+
+1. PDF 页眉、页脚、页码。
+2. 官网访问 CTA、营销跳转链接、URL。
+3. 版权、商标、法律声明。
+4. 数据表脚注、一致性测试说明、文档追踪编号。
+5. 导入草稿自身的 frontmatter 和来源提示。
+
+预清洗不负责判断产品事实真伪，不会把缺失事实补齐。被清洗内容会进入 `review_report.removed_irrelevant_content`，供管理员检查是否存在误删。
+
+### 23.3 草稿硬规则
+
+自动生成的 Markdown 必须默认：
+
+```yaml
+status: draft
+rag: false
+customer_safe: false
+```
+
+原文没有提供的技术事实不能补全，只能写：
+
+```text
+待确认：原始文档未提供明确依据。
+```
+
+转为正式知识必须人工确认后再手动调整：
+
+```yaml
+status: active
+rag: true
+```
+
+### 23.4 输出结构
+
+接口返回：
+
+```json
+{
+  "rewritten_markdown": "...",
+  "review_report": {
+    "missing_fields": [],
+    "uncertain_claims": [],
+    "suggested_questions": [],
+    "removed_irrelevant_content": [],
+    "suggested_path": "domains/default/20_Drafts/xxx.md",
+    "ready_for_active": false,
+    "notes": []
+  },
+  "validation": {
+    "ok": true,
+    "missing_required_fields": [],
+    "errors": [],
+    "warnings": []
+  }
+}
+```
+
+### 23.5 后续增强
+
+第二版可以增加保存到 `20_Drafts`，但仍需要人工确认。
+
+只有在出现批量入库、重复判断、多轮补信息需求后，再考虑把同一套能力包装成 maintenance skill。Hermes 不应获得自动写正式 Wiki 的权限。
+
+### 23.6 PDF 文本导入
+
+文档入库助手支持文本型 PDF 的第一版导入：
+
+```text
+PDF 上传
+        ↓
+应用层抽取文本
+        ↓
+中间 Markdown
+        ↓
+文档入库助手生成 draft 草稿
+```
+
+第一版范围：
+
+1. 只支持文本型 PDF。
+2. 不做 OCR。
+3. 不解析图片内文字。
+4. 不保证复杂表格结构还原。
+5. 不让模型直接读取 PDF 文件。
+6. 抽取结果按页组织为 Markdown，供草稿重写使用。
+7. 抽取后的 Markdown 会先经过预清洗，再进入标准化草稿生成。
+
+当前后端接口：
+
+```text
+POST /api/extract-pdf
+```
+
+接口返回 `extracted_markdown`、页数、字符数和 warnings。若抽取文本过少，提示可能是扫描件，仍不进入自动正式知识链路。

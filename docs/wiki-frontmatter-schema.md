@@ -86,3 +86,18 @@ Admin Web 当前会检查：
 - `sku` / `aliases` 是否重复。
 - `[[wikilink]]` 是否断链。
 - 文档是否已经进入索引表。
+
+## 文档入库助手草稿规则
+
+Admin Web 的“文档入库”只生成草稿，不直接生成正式知识。自动生成的 Markdown 必须默认：
+
+```yaml
+status: draft
+rag: false
+customer_safe: false
+sources:
+  - type: draft_import
+    ref: 未提供正式来源
+```
+
+原始资料没有明确提供的技术事实必须保留为“待确认”，不能由模型自动补全。

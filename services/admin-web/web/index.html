@@ -23,13 +23,14 @@
     <button data-tab="sync"><span>同步管理</span><span class="nav-key">05</span></button>
     <button data-tab="knowledgeMap"><span>知识地图</span><span class="nav-key">06</span></button>
     <button data-tab="docs"><span>文档浏览</span><span class="nav-key">07</span></button>
-    <button data-tab="schema"><span>Schema 模板</span><span class="nav-key">08</span></button>
+    <button data-tab="rewrite"><span>文档入库</span><span class="nav-key">08</span></button>
+    <button data-tab="schema"><span>Schema 模板</span><span class="nav-key">09</span></button>
     <div class="nav-group">问答质量</div>
-    <button data-tab="rag"><span>RAG 测试</span><span class="nav-key">09</span></button>
-    <button data-tab="gaps"><span>知识缺口</span><span class="nav-key">10</span></button>
-    <button data-tab="audit"><span>审计日志</span><span class="nav-key">11</span></button>
+    <button data-tab="rag"><span>RAG 测试</span><span class="nav-key">10</span></button>
+    <button data-tab="gaps"><span>知识缺口</span><span class="nav-key">11</span></button>
+    <button data-tab="audit"><span>审计日志</span><span class="nav-key">12</span></button>
     <div class="nav-group">工具</div>
-    <button data-tab="obsidian"><span>obsidian-wiki</span><span class="nav-key">12</span></button>
+    <button data-tab="obsidian"><span>obsidian-wiki</span><span class="nav-key">13</span></button>
   </nav>
 </aside>
 <div class="page">
@@ -220,6 +221,68 @@
     <div class="panel"><div class="panel-head"><strong>Vault 文件</strong><button class="action" onclick="loadFiles('.')">根目录</button></div><div class="panel-body"><div id="files" class="file-list">loading...</div></div></div>
     <div class="panel"><div class="panel-head"><strong id="docTitle">选择 Markdown 文件预览</strong><span id="docPath" class="muted"></span></div><div class="panel-body"><pre id="docPreview" class="doc-text"></pre></div></div>
     <div class="panel"><div class="panel-head"><strong>Frontmatter</strong><span id="docStatus" class="badge">等待</span></div><div class="panel-body"><div id="docMeta" class="kv"><div class="empty">选择文档后显示元数据</div></div></div></div>
+  </div>
+</section>
+<section id="rewrite">
+  <div class="section-head">
+    <div><h2>文档入库</h2><div class="section-desc">把粗糙 Markdown 标准化为 Wiki 草稿。第一版只生成草稿和缺口报告，不写入 Vault，不进入正式问答。</div></div>
+    <div class="toolbar"><button class="action" onclick="clearRewriteDocument()">清空</button><button class="action primary" onclick="rewriteDocument()">生成草稿</button></div>
+  </div>
+  <div class="notice" style="margin-bottom:14px">硬规则：自动重写永远只生成 draft，默认 <code>status: draft</code>、<code>rag: false</code>、<code>customer_safe: false</code>。原文没有的技术事实只标记待确认，不自动补全。</div>
+  <div class="rewrite-layout">
+    <div class="stack">
+      <div class="panel">
+        <div class="panel-head"><strong>原始文档</strong><span class="muted">粘贴 Markdown / 上传文本型 PDF</span></div>
+        <div class="panel-body">
+          <div class="form-grid" style="margin-bottom:12px">
+            <div class="field">
+              <label for="rewriteDomain">Domain</label>
+              <input id="rewriteDomain" value="default" />
+            </div>
+            <div class="field">
+              <label for="rewriteProfile">Profile</label>
+              <input id="rewriteProfile" value="product" />
+            </div>
+            <div class="field">
+              <label for="rewriteType">文档类型</label>
+              <select id="rewriteType">
+                <option value="product_note">product_note</option>
+                <option value="product_spec">product_spec</option>
+                <option value="product_faq">product_faq</option>
+                <option value="compatibility_note">compatibility_note</option>
+                <option value="solution_note">solution_note</option>
+                <option value="knowledge_note">knowledge_note</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="rewriteOwner">Owner</label>
+              <input id="rewriteOwner" value="nick" />
+            </div>
+          </div>
+          <div class="pdf-upload-row">
+            <input id="pdfInput" type="file" accept="application/pdf,.pdf" />
+            <button class="action" onclick="extractPdfText()">抽取 PDF 文本</button>
+            <span id="pdfExtractState" class="muted">仅支持文本型 PDF，不做 OCR</span>
+          </div>
+          <textarea id="rewriteInput" class="rewrite-input" placeholder="粘贴原始 Markdown，例如：产品名称、主要用途、规格片段、兼容说明、来源备注等。信息不完整也可以，系统会生成待确认清单。"></textarea>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><strong>PDF 抽取报告</strong><span class="muted">text only</span></div>
+        <div class="panel-body"><div id="pdfExtractReport" class="empty">上传文本型 PDF 后显示页数、字符数和告警。</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><strong>缺口报告</strong><span id="rewriteStatus" class="badge">等待</span></div>
+        <div class="panel-body"><div id="rewriteReport" class="empty">生成草稿后显示缺失字段、待确认问题和建议路径。</div></div>
+      </div>
+    </div>
+    <div class="stack">
+      <div class="panel">
+        <div class="panel-head"><strong>标准 Markdown 草稿</strong><div class="toolbar"><button class="action" onclick="copyRewriteDraft()">复制</button><button class="action" onclick="downloadRewriteDraft()">下载 .md</button></div></div>
+        <div class="panel-body"><pre id="rewriteOutput" class="rewrite-output">等待生成...</pre></div>
+      </div>
+      <details class="raw"><summary>调试详情</summary><div class="panel"><div class="panel-body"><pre id="rewriteRaw">等待生成...</pre></div></div></details>
+    </div>
   </div>
 </section>
 <section id="gaps">
