@@ -1,17 +1,14 @@
 version: 1
 default_domain: default
-
 vault_layout:
   mode: domain_subpath
   target_root: domains
   migration: completed
-
 notes:
-  - 第一版领域注册表只供 Admin 管理侧读取，不直接改变 RAG、Hermes hook 或同步器路由。
-  - 默认领域已迁移到 vault/domains/default。
-  - Vault 目录隔离的目标结构是 vault/domains/<domain>/...，新增领域时按该结构创建目录。
-  - 新增第二个领域时，优先新增独立 Hermes hook 和独立 RAG 实例，再把领域注册到这里。
-
+- 领域注册表已用于 RAG 的领域隔离、检索参数和答案格式选择。
+- 默认领域已迁移到 vault/domains/default。
+- Vault 目录隔离的目标结构是 vault/domains/<domain>/...，新增领域时按该结构创建目录。
+- 新增领域时，在注册表配置唯一入口和 hook 名，运行生成脚本；共享 RAG 实例即可，达到权限或容量边界后再拆分。
 domains:
   default:
     display_name: 默认知识库
@@ -25,29 +22,84 @@ domains:
     vector_backend: milvus
     vector_collection: llm_wiki_chunks_v2
     entrypoint: /wiki
+    entrypoint_aliases:
+    - /llmwiki
+    - 'wiki:'
+    - wiki：
+    - 'llmwiki:'
+    - llmwiki：
+    entrypoint_platforms:
+    - qqbot
+    hermes_hook: llm_wiki_router
+    hermes_rag_base_url: http://127.0.0.1:18080
     enabled: true
-
 profiles:
   product:
     display_name: 产品知识
     answer_contract:
-      - 结论
-      - 适用场景
-      - 注意事项
-      - 可替代方案
-      - 来源
+    - 结论
+    - 适用场景
+    - 注意事项
+    - 可替代方案
+    - 来源
     required_core_fields:
-      - rag
-      - title
-      - type
-      - status
-      - owner
-      - updated
+    - rag
+    - title
+    - type
+    - status
+    - owner
+    - updated
     extension_fields:
-      - sku
-      - aliases
-      - product_line
-      - applies_to
-      - compatible_with
-      - alternatives
-      - limitations
+    - sku
+    - aliases
+    - product_line
+    - applies_to
+    - compatible_with
+    - alternatives
+    - limitations
+    retrieval:
+      vector_top_k: 30
+      fts_top_k: 30
+      pre_rerank_top_k: 20
+      rerank_top_k: 8
+      answerable_threshold: 0.5
+      rerank_only_answerable_threshold: 0.85
+      milvus_filter_multiplier: 3
+    answer:
+      max_sources: 4
+      max_tokens: 700
+      no_basis_text: 未在正式 Wiki 中找到明确依据。
+      instructions:
+      - 只能使用正式 Wiki 来源内容，不得补充模型常识或推测
+      - 回答必须中文、客观、简洁
+      - 必须保留来源中的限制条件、版本号、兼容要求和替代料号
+      sections:
+      - key: conclusion
+        label: 结论
+        source_headings:
+        - 一句话结论
+        - 结论
+        - 型号对应
+      - key: scenarios
+        label: 适用场景
+        source_headings:
+        - 适用场景
+        - 常用搭配
+        - 推荐搭配
+        - 使用场景
+        - 型号对应
+      - key: notes
+        label: 注意事项
+        source_headings:
+        - 限制条件
+        - 注意事项
+        - 兼容性
+        - 售前确认点
+        - 风险
+      - key: alternatives
+        label: 可替代方案
+        source_headings:
+        - 替代方案
+      - key: sources
+        label: 来源
+        kind: sources

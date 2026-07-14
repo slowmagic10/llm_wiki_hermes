@@ -5,10 +5,16 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from config import INDEX_HTML, MODEL_SETTINGS_PATH, WEB_DIR
 from document_rewriter_service import rewrite_document
+from domain_admin_service import (
+    DomainAdminError,
+    apply_domain_hooks,
+    save_domain_update,
+    validate_domain_update,
+)
 from domains_service import domain_registry_status
 from files_service import file_preview as get_file_preview
 from files_service import list_files, schema_template as get_schema_template
@@ -39,11 +45,35 @@ app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="stati
 
 class QueryRequest(BaseModel):
     query: str
+    domain: str | None = None
+    profile: str | None = None
 
 
 class ModelConfigRequest(BaseModel):
     chat_model: str
     reranker_model: str
+
+
+class DomainConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str
+    description: str = ""
+    profile: str
+    vault_subpath: str
+    target_vault_subpath: str = ""
+    isolation_mode: str = "domain_subpath"
+    rag_base_url: str = "http://rag-api:18080"
+    sync_status_file: str = "/root/llm_wiki_hermes/logs/llm-wiki-sync-status.json"
+    vector_backend: str = "milvus"
+    vector_collection: str = "llm_wiki_chunks_v2"
+    entrypoint: str
+    entrypoint_aliases: list[str] = []
+    entrypoint_platforms: list[str] = ["qqbot"]
+    hermes_hook: str
+    hermes_rag_base_url: str = "http://127.0.0.1:18080"
+    enabled: bool = True
+    make_default: bool = False
 
 
 class RewriteDocumentRequest(BaseModel):
@@ -127,6 +157,35 @@ def domains() -> dict[str, Any]:
     return domain_registry_status()
 
 
+@app.post("/api/domains/validate")
+def validate_domain(domain_id: str, request: DomainConfigRequest) -> dict[str, Any]:
+    return validate_domain_update(
+        domain_id.strip(),
+        request.model_dump(exclude={"make_default"}),
+        make_default=request.make_default,
+    )
+
+
+@app.put("/api/domains/{domain_id}")
+def save_domain(domain_id: str, request: DomainConfigRequest) -> dict[str, Any]:
+    try:
+        return save_domain_update(
+            domain_id.strip(),
+            request.model_dump(exclude={"make_default"}),
+            make_default=request.make_default,
+        )
+    except DomainAdminError as exc:
+        raise HTTPException(status_code=400, detail={"message": str(exc), "issues": exc.issues}) from exc
+
+
+@app.post("/api/domain-hooks/apply")
+def apply_hooks() -> dict[str, Any]:
+    try:
+        return apply_domain_hooks()
+    except DomainAdminError as exc:
+        raise HTTPException(status_code=400, detail={"message": str(exc), "issues": exc.issues}) from exc
+
+
 @app.get("/api/knowledge-map")
 def knowledge_map() -> dict[str, Any]:
     return knowledge_map_data()
@@ -154,7 +213,7 @@ def full_sync() -> dict[str, Any]:
 
 @app.post("/api/rag-test")
 async def rag_test(request: QueryRequest) -> dict[str, Any]:
-    return await rag_answer(request.query)
+    return await rag_answer(request.query, domain=request.domain, profile=request.profile)
 
 
 @app.post("/api/rewrite-document")

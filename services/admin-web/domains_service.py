@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +10,9 @@ import yaml
 
 from config import DOMAIN_REGISTRY_PATH, RAG_BASE_URL, SYNC_STATUS_FILE, VAULT_PATH
 from db import fetch_one
+from entrypoints_service import domain_entrypoint_issues, domain_hook_status
+
+DOMAIN_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
 def default_domain_registry() -> dict[str, Any]:
@@ -32,6 +37,10 @@ def default_domain_registry() -> dict[str, Any]:
                 "vector_backend": os.getenv("VECTOR_BACKEND", "milvus"),
                 "vector_collection": os.getenv("MILVUS_COLLECTION", "llm_wiki_chunks_v2"),
                 "entrypoint": "/wiki",
+                "entrypoint_aliases": ["/llmwiki", "wiki:", "wiki：", "llmwiki:", "llmwiki："],
+                "entrypoint_platforms": ["qqbot"],
+                "hermes_hook": "llm_wiki_router",
+                "hermes_rag_base_url": "http://127.0.0.1:18080",
                 "enabled": True,
             }
         },
@@ -57,8 +66,29 @@ def read_domain_registry() -> dict[str, Any]:
         "registry_path": str(DOMAIN_REGISTRY_PATH),
         "source": source,
         "domains": domains,
+        "profiles": raw.get("profiles") if isinstance(raw.get("profiles"), dict) else {},
         "notes": raw.get("notes", []),
     }
+
+
+def write_domain_registry(registry: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "version": registry.get("version", 1),
+        "default_domain": str(registry.get("default_domain") or "default"),
+        "vault_layout": registry.get("vault_layout") if isinstance(registry.get("vault_layout"), dict) else {},
+        "notes": registry.get("notes") if isinstance(registry.get("notes"), list) else [],
+        "domains": registry.get("domains") if isinstance(registry.get("domains"), dict) else {},
+        "profiles": registry.get("profiles") if isinstance(registry.get("profiles"), dict) else {},
+    }
+    DOMAIN_REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = DOMAIN_REGISTRY_PATH.with_suffix(DOMAIN_REGISTRY_PATH.suffix + ".tmp")
+    backup = DOMAIN_REGISTRY_PATH.with_suffix(DOMAIN_REGISTRY_PATH.suffix + ".bak")
+    if DOMAIN_REGISTRY_PATH.exists():
+        shutil.copy2(DOMAIN_REGISTRY_PATH, backup)
+    rendered = yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
+    temporary.write_text(rendered, encoding="utf-8")
+    os.replace(temporary, DOMAIN_REGISTRY_PATH)
+    return payload
 
 
 def validate_domain_registry(registry: dict[str, Any]) -> list[dict[str, str]]:
@@ -70,20 +100,50 @@ def validate_domain_registry(registry: dict[str, Any]) -> list[dict[str, str]]:
     default_domain = str(registry.get("default_domain") or "")
     if default_domain and default_domain not in domains:
         issues.append({"severity": "error", "domain": default_domain, "code": "missing_default_domain", "message": "default_domain 未在 domains 中定义"})
-    required = ("display_name", "profile", "vault_subpath", "rag_base_url", "sync_status_file", "enabled")
+    default_config = domains.get(default_domain)
+    if isinstance(default_config, dict) and not bool(default_config.get("enabled")):
+        issues.append({"severity": "error", "domain": default_domain, "code": "disabled_default_domain", "message": "default_domain 必须保持启用"})
+    profiles = registry.get("profiles") or {}
+    required = ("display_name", "profile", "vault_subpath", "rag_base_url", "sync_status_file", "entrypoint", "hermes_hook", "enabled")
+    enabled_paths: list[tuple[str, str]] = []
     for domain_id, config in domains.items():
+        domain_id = str(domain_id)
+        if not DOMAIN_ID_RE.fullmatch(domain_id):
+            issues.append({"severity": "error", "domain": domain_id, "code": "invalid_domain_id", "message": "领域 ID 只能使用小写字母、数字、下划线和连字符，且必须以字母开头"})
         if not isinstance(config, dict):
             issues.append({"severity": "error", "domain": str(domain_id), "code": "invalid_domain_config", "message": "领域配置必须是对象"})
             continue
         for key in required:
             if key not in config:
                 issues.append({"severity": "warning", "domain": str(domain_id), "code": "missing_field", "message": f"缺少字段: {key}"})
+        profile_id = str(config.get("profile") or "")
+        if profile_id and profile_id not in profiles:
+            issues.append({"severity": "error", "domain": str(domain_id), "code": "unknown_profile", "message": f"未定义 profile: {profile_id}"})
         subpath = str(config.get("vault_subpath") or "")
         if subpath.startswith("/") or ".." in Path(subpath).parts:
             issues.append({"severity": "error", "domain": str(domain_id), "code": "invalid_vault_subpath", "message": f"vault_subpath 不安全: {subpath}"})
+        elif bool(config.get("enabled")):
+            normalized_path = subpath.strip("/") or "."
+            for other_domain, other_path in enabled_paths:
+                overlaps = (
+                    normalized_path == "."
+                    or other_path == "."
+                    or normalized_path == other_path
+                    or normalized_path.startswith(other_path + "/")
+                    or other_path.startswith(normalized_path + "/")
+                )
+                if overlaps:
+                    issues.append({
+                        "severity": "error",
+                        "domain": domain_id,
+                        "code": "vault_subpath_overlap",
+                        "message": f"vault_subpath 与领域 {other_domain} 重叠: {normalized_path} / {other_path}",
+                    })
+            enabled_paths.append((domain_id, normalized_path))
         target_subpath = str(config.get("target_vault_subpath") or "")
         if target_subpath and (target_subpath.startswith("/") or ".." in Path(target_subpath).parts):
             issues.append({"severity": "error", "domain": str(domain_id), "code": "invalid_target_vault_subpath", "message": f"target_vault_subpath 不安全: {target_subpath}"})
+    issues.extend(domain_entrypoint_issues(registry))
     return issues
 
 
@@ -150,6 +210,14 @@ def domain_registry_status() -> dict[str, Any]:
             continue
         current_status = domain_path_status(str(config.get("vault_subpath") or "."))
         target_status = domain_path_status(str(config.get("target_vault_subpath") or ""))
+        hook_status = domain_hook_status(str(domain_id), str(config.get("hermes_hook") or ""))
+        if bool(config.get("enabled")) and not hook_status.get("ready"):
+            issues.append({
+                "severity": "warning",
+                "domain": str(domain_id),
+                "code": "hermes_hook_not_ready",
+                "message": f"Hermes 领域入口未生成或与领域不匹配: {config.get('hermes_hook') or '-'}",
+            })
         enriched_domains[str(domain_id)] = {
             **config,
             "vault_status": {
@@ -157,6 +225,8 @@ def domain_registry_status() -> dict[str, Any]:
                 "indexed_files": domain_indexed_count(str(config.get("vault_subpath") or ".")),
             },
             "target_vault_status": target_status if config.get("target_vault_subpath") else None,
+            "hermes_hook_status": hook_status,
+            "isolated_answer_url": f"/rag/domains/{domain_id}/answer",
         }
     enabled_domains = [item for item in enriched_domains.values() if isinstance(item, dict) and bool(item.get("enabled"))]
     return {

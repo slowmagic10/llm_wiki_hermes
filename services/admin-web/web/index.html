@@ -18,7 +18,7 @@
     <button class="active" data-tab="dashboard"><span>仪表盘</span><span class="nav-key">01</span></button>
     <button data-tab="health"><span>健康检查</span><span class="nav-key">02</span></button>
     <button data-tab="models"><span>模型配置</span><span class="nav-key">03</span></button>
-    <button data-tab="domains"><span>领域注册表</span><span class="nav-key">04</span></button>
+    <button data-tab="domains"><span>领域管理</span><span class="nav-key">04</span></button>
     <div class="nav-group">知识维护</div>
     <button data-tab="sync"><span>同步管理</span><span class="nav-key">05</span></button>
     <button data-tab="knowledgeMap"><span>知识地图</span><span class="nav-key">06</span></button>
@@ -107,17 +107,68 @@
 </section>
 <section id="domains">
   <div class="section-head">
-    <div><h2>领域注册表</h2><div class="section-desc">统一记录不同知识领域的 profile、Vault 子路径、RAG 入口、同步状态和向量 collection。第一版只读展示，不改变当前问答路由。</div></div>
-    <div class="toolbar"><button class="action primary" onclick="loadDomains()">刷新注册表</button></div>
+    <div><h2>领域管理</h2><div class="section-desc">配置知识领域、Vault 边界和独立 Hermes 入口。保存配置不会自动重启 Hermes。</div></div>
+    <div class="toolbar">
+      <span id="domainActionState" class="muted">等待操作</span>
+      <button class="action" onclick="loadDomains()">刷新</button>
+      <button class="action" onclick="openDomainEditor()">新增领域</button>
+      <button class="action primary" onclick="applyDomainHooks()">应用入口配置</button>
+    </div>
   </div>
   <div id="domainCards" class="grid" style="margin-bottom:14px"></div>
+  <div id="domainEditorPanel" class="panel hidden" style="margin-bottom:14px">
+    <div class="panel-head">
+      <div><strong id="domainEditorTitle">新增领域</strong><div class="list-sub">领域 ID 创建后不可修改；停用领域后再次应用入口配置。</div></div>
+      <button class="action" onclick="closeDomainEditor()">关闭</button>
+    </div>
+    <div class="panel-body">
+      <div class="form-grid">
+        <div class="field"><label for="domainId">领域 ID</label><input id="domainId" placeholder="ops" onblur="suggestDomainFields()" /><div class="field-help">小写字母开头，可使用数字、下划线和连字符。</div></div>
+        <div class="field"><label for="domainDisplayName">显示名称</label><input id="domainDisplayName" placeholder="运维知识库" /></div>
+        <div class="field"><label for="domainProfile">处理 Profile</label><select id="domainProfile"></select><div class="field-help">决定检索参数和答案结构。</div></div>
+        <div class="field">
+          <label>状态</label>
+          <div class="check-row"><label><input type="checkbox" id="domainEnabled" checked /> 启用领域</label><label><input type="checkbox" id="domainMakeDefault" /> 设为默认领域</label></div>
+        </div>
+        <div class="field field-wide"><label for="domainDescription">领域说明</label><textarea id="domainDescription" class="compact-textarea" placeholder="说明该领域承载的正式知识范围"></textarea></div>
+      </div>
+      <div class="form-divider">知识与入口边界</div>
+      <div class="form-grid">
+        <div class="field"><label for="domainVaultSubpath">Vault 子目录</label><input id="domainVaultSubpath" placeholder="domains/ops" /><div class="field-help">不同启用领域之间不能相同或互相嵌套。</div></div>
+        <div class="field"><label for="domainTargetVaultSubpath">目标子目录</label><input id="domainTargetVaultSubpath" placeholder="domains/ops" /></div>
+        <div class="field"><label for="domainIsolationMode">隔离模式</label><select id="domainIsolationMode"><option value="domain_subpath">domain_subpath</option><option value="legacy_root">legacy_root</option></select></div>
+        <div class="field"><label for="domainEntrypoint">主入口</label><input id="domainEntrypoint" placeholder="/opswiki" /></div>
+        <div class="field"><label for="domainAliases">入口别名</label><textarea id="domainAliases" class="compact-textarea" placeholder="/ops-wiki&#10;opswiki:"></textarea><div class="field-help">每行一个触发词。</div></div>
+        <div class="field"><label for="domainPlatforms">入口平台</label><input id="domainPlatforms" value="qqbot" /><div class="field-help">多个平台使用逗号分隔。</div></div>
+        <div class="field"><label for="domainHermesHook">Hermes hook</label><input id="domainHermesHook" placeholder="llm_wiki_ops_router" /></div>
+      </div>
+      <details class="advanced-settings">
+        <summary>高级运行设置</summary>
+        <div class="form-grid">
+          <div class="field"><label for="domainRagBaseUrl">容器内 RAG 地址</label><input id="domainRagBaseUrl" value="http://rag-api:18080" /></div>
+          <div class="field"><label for="domainHermesRagBaseUrl">Hermes RAG 地址</label><input id="domainHermesRagBaseUrl" value="http://127.0.0.1:18080" /></div>
+          <div class="field"><label for="domainSyncStatusFile">同步状态文件</label><input id="domainSyncStatusFile" value="/root/llm_wiki_hermes/logs/llm-wiki-sync-status.json" /></div>
+          <div class="field"><label for="domainVectorBackend">向量后端</label><select id="domainVectorBackend"><option value="milvus">milvus</option><option value="pgvector">pgvector</option></select></div>
+          <div class="field"><label for="domainVectorCollection">向量 Collection</label><input id="domainVectorCollection" value="llm_wiki_chunks_v2" /></div>
+        </div>
+      </details>
+      <div class="editor-actions">
+        <button class="action" onclick="validateDomainConfig()">校验</button>
+        <button class="action primary" onclick="saveDomainConfig()">保存领域</button>
+      </div>
+    </div>
+  </div>
   <div class="panel">
     <div class="panel-head"><strong>领域列表</strong><span id="domainRegistryPath" class="muted"></span></div>
     <div class="panel-body"><div id="domainList" class="task-list"></div></div>
   </div>
   <div class="panel" style="margin-top:14px">
-    <div class="panel-head"><strong>校验结果</strong><span id="domainIssueCount" class="badge">等待</span></div>
-    <div class="panel-body"><div id="domainIssues"></div></div>
+    <div class="panel-head"><strong>检索与答案 Profiles</strong><span class="muted">只读，由 domains.yml 维护</span></div>
+    <div class="panel-body"><div id="profileList" class="task-list"></div></div>
+  </div>
+  <div class="panel" style="margin-top:14px">
+    <div class="panel-head"><strong>校验与操作结果</strong><span id="domainIssueCount" class="badge">等待</span></div>
+    <div class="panel-body"><div id="domainIssues"></div><pre id="domainActionRaw" class="action-output hidden"></pre></div>
   </div>
   <details class="raw"><summary>调试详情</summary><div class="panel"><div class="panel-body"><pre id="domainsRaw">等待加载...</pre></div></div></details>
 </section>
@@ -186,6 +237,16 @@
       <div class="panel">
         <div class="panel-head"><strong>测试问题</strong><span class="muted">正式 Wiki 来源约束</span></div>
         <div class="panel-body">
+          <div class="form-grid" style="margin-bottom:10px">
+            <div class="field">
+              <label for="ragDomain">知识领域</label>
+              <select id="ragDomain" onchange="syncRagProfile()"><option value="default">默认知识库</option></select>
+            </div>
+            <div class="field">
+              <label for="ragProfile">检索与答案 Profile</label>
+              <select id="ragProfile"><option value="product">产品知识</option></select>
+            </div>
+          </div>
           <textarea id="query" placeholder="输入要测试的问题，例如：FTLC4353RHPL对应我司哪个型号，使用场景是什么？"></textarea>
           <div class="toolbar" style="margin-top:10px"><button class="action primary" onclick="testRag()">测试 RAG</button></div>
           <div class="quick-list">

@@ -93,6 +93,8 @@ services:
       DATABASE_URL: postgresql://rag:rag@postgres:5432/rag
       LITELLM_BASE_URL: http://172.19.0.1:14000/v1
       MODEL_SETTINGS_PATH: /root/llm_wiki_hermes/config/model-settings.json
+      HERMES_HOOKS_PATH: /root/.hermes/hooks
+      DOMAIN_HOOK_SYNC_SCRIPT: /root/llm_wiki_hermes/bin/sync_hermes_domain_hooks.py
       SYNC_SCRIPT: /root/llm_wiki_hermes/bin/sync_vault_and_rag_container.sh
       SERVICE_MODE: docker
       VECTOR_BACKEND: milvus
@@ -106,6 +108,7 @@ services:
       - /root/llm_wiki_hermes/logs:/root/llm_wiki_hermes/logs
       - /root/llm_wiki_hermes/config:/root/llm_wiki_hermes/config
       - /root/llm_wiki_hermes/bin:/root/llm_wiki_hermes/bin:ro
+      - /root/.hermes/hooks:/root/.hermes/hooks
       - /root/llm_wiki_hermes/docs:/root/llm_wiki_hermes/docs:ro
       - /root/llm_wiki_hermes/obsidian-wiki-config:/root/.obsidian-wiki
       - /root/.ssh:/root/.ssh:ro

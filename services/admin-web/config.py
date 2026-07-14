@@ -15,6 +15,8 @@ SYNC_STATUS_FILE = Path(os.getenv("SYNC_STATUS_FILE", str(PROJECT_ROOT / "logs/l
 SCHEMA_DOC = PROJECT_ROOT / "docs" / "wiki-frontmatter-schema.md"
 MODEL_SETTINGS_PATH = Path(os.getenv("MODEL_SETTINGS_PATH", str(PROJECT_ROOT / "config/model-settings.json")))
 DOMAIN_REGISTRY_PATH = Path(os.getenv("DOMAIN_REGISTRY_PATH", str(PROJECT_ROOT / "config/domains.yml")))
+DOMAIN_HOOK_SYNC_SCRIPT = Path(os.getenv("DOMAIN_HOOK_SYNC_SCRIPT", str(PROJECT_ROOT / "bin/sync_hermes_domain_hooks.py")))
+HERMES_HOOKS_PATH = Path(os.getenv("HERMES_HOOKS_PATH", "/root/.hermes/hooks"))
 WEB_DIR = Path(__file__).resolve().parent / "web"
 INDEX_HTML = WEB_DIR / "index.html"
 

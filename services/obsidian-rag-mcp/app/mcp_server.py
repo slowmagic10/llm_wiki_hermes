@@ -4,6 +4,7 @@ from mcp.server.fastmcp import FastMCP
 
 from app.config import settings
 from app.models_client import chat_complete
+from app.profiles import resolve_profile
 from app.retriever import _record_gap, search
 
 
@@ -12,8 +13,9 @@ mcp = FastMCP(
     instructions=(
         "Read-only enterprise wiki retrieval and answer generation. For knowledge, "
         "policy, product, compatibility, configuration, and FAQ questions, use search_llm_wiki and "
-        "answer from final_answer. Do not replace final_answer with general model "
-        "knowledge. If answerable is false, say the official wiki has no reliable source."
+        "answer from final_answer. Pass domain when a domain-specific hook is used. "
+        "Do not replace final_answer with general model knowledge. If answerable is false, "
+        "say the official wiki has no reliable source."
     ),
     host="127.0.0.1",
     port=18081,
@@ -22,10 +24,14 @@ mcp = FastMCP(
 )
 
 
-def _source_block(result: dict[str, Any]) -> str:
+def _answer_config(result: dict[str, Any]) -> dict[str, Any]:
+    return resolve_profile(result.get("domain"), result.get("profile"))["answer"]
+
+
+def _source_block(result: dict[str, Any], max_sources: int) -> str:
     chunks = result.get("chunks") or []
     parts: list[str] = []
-    for index, item in enumerate(chunks[:4], start=1):
+    for index, item in enumerate(chunks[:max_sources], start=1):
         path = item.get("path") or ""
         heading = " > ".join(item.get("heading_path") or [])
         text = str(item.get("text") or "").strip()
@@ -33,9 +39,12 @@ def _source_block(result: dict[str, Any]) -> str:
     return "\n\n".join(parts)
 
 
-def _source_lines(result: dict[str, Any]) -> list[str]:
+def _source_lines(result: dict[str, Any], max_sources: int | None = None) -> list[str]:
+    citations = result.get("citations") or []
+    if max_sources is not None:
+        citations = citations[:max_sources]
     lines = []
-    for index, citation in enumerate(result.get("citations") or [], start=1):
+    for index, citation in enumerate(citations, start=1):
         path = citation.get("path") or ""
         heading = citation.get("heading") or ""
         score = citation.get("score")
@@ -46,14 +55,22 @@ def _source_lines(result: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _not_answerable_message() -> str:
-    return (
-        "结论：正式 Wiki 中没有检索到足够可靠的来源，暂不能回答。\n\n"
-        "适用场景：\n- 未在正式 Wiki 中找到明确依据。\n\n"
-        "注意事项：\n- 该问题已按知识缺口记录，需人工补充或修订 Markdown 后再回答。\n\n"
-        "可替代方案：\n- 请补充正式 Wiki 文档后重新同步索引。\n\n"
-        "来源：\n- 无可靠来源"
-    )
+def _sections(answer_config: dict[str, Any]) -> list[dict[str, Any]]:
+    return [item for item in (answer_config.get("sections") or []) if isinstance(item, dict)]
+
+
+def _not_answerable_message(answer_config: dict[str, Any]) -> str:
+    no_basis = str(answer_config.get("no_basis_text") or "未在正式 Wiki 中找到明确依据。")
+    lines: list[str] = []
+    for section in _sections(answer_config):
+        label = str(section.get("label") or "").strip()
+        lines.append(f"{label}：")
+        if section.get("kind") == "sources":
+            lines.append("- 无可靠来源")
+        else:
+            lines.append(no_basis)
+        lines.append("")
+    return "\n".join(lines).strip()
 
 
 def _final_answer_has_no_basis(answer: str) -> bool:
@@ -67,12 +84,12 @@ def _final_answer_has_no_basis(answer: str) -> bool:
     return any(marker in normalized for marker in markers)
 
 
-def _final_answer_is_invalid(answer: str) -> bool:
+def _final_answer_is_invalid(answer: str, answer_config: dict[str, Any]) -> bool:
     text = (answer or "").strip()
     if not text:
         return True
 
-    required_headings = ("结论：", "适用场景：", "注意事项：", "可替代方案：", "来源：")
+    required_headings = tuple(f"{section['label']}：" for section in _sections(answer_config))
     if not all(heading in text for heading in required_headings):
         return True
 
@@ -93,66 +110,73 @@ def _mark_no_supported_answer(query: str, result: dict[str, Any]) -> None:
     _record_gap(query, "模型判断来源不足以回答")
 
 
-def _fallback_answer(result: dict[str, Any]) -> str:
+def _section_text(chunks: list[dict[str, Any]], headings: list[str], no_basis: str) -> str:
+    for keyword in headings:
+        for item in chunks:
+            heading = " > ".join(item.get("heading_path") or [])
+            if keyword not in heading:
+                continue
+            text = str(item.get("text") or "").strip()
+            if text:
+                return text
+    return no_basis
+
+
+def _fallback_answer(result: dict[str, Any], answer_config: dict[str, Any]) -> str:
     if not result.get("answerable"):
-        return _not_answerable_message()
+        return _not_answerable_message(answer_config)
+
     chunks = result.get("chunks") or []
-
-    def section_text(*heading_keywords: str) -> str:
-        for keyword in heading_keywords:
-            for item in chunks:
-                heading = " > ".join(item.get("heading_path") or [])
-                if keyword not in heading:
-                    continue
-                text = str(item.get("text") or "").strip()
-                if text:
-                    return text
-        return "未在正式 Wiki 中找到明确依据。"
-
-    conclusion = section_text("一句话结论", "结论", "型号对应")
-    scenarios = section_text("适用场景", "常用搭配", "推荐搭配", "使用场景", "型号对应")
-    notes = section_text("限制条件", "注意事项", "兼容性", "售前确认点", "风险")
-    alternatives = section_text("替代方案")
-
-    lines = [
-        "结论：",
-        conclusion,
-        "",
-        "适用场景：",
-        scenarios,
-        "",
-        "注意事项：",
-        notes,
-        "",
-        "可替代方案：",
-        alternatives,
-    ]
-    if result.get("citations"):
+    no_basis = str(answer_config.get("no_basis_text") or "未在正式 Wiki 中找到明确依据。")
+    max_sources = int(answer_config.get("max_sources") or 4)
+    lines: list[str] = []
+    for section in _sections(answer_config):
+        label = str(section.get("label") or "").strip()
+        lines.append(f"{label}：")
+        if section.get("kind") == "sources":
+            source_lines = _source_lines(result, max_sources)
+            lines.extend(f"- {line}" for line in source_lines)
+            if not source_lines:
+                lines.append("- 无可靠来源")
+        else:
+            headings = [str(value) for value in (section.get("source_headings") or [])]
+            lines.append(_section_text(chunks, headings, no_basis))
         lines.append("")
-        lines.append("来源：")
-        lines.extend(f"- {line}" for line in _source_lines(result)[:4])
     return "\n".join(lines).strip()
 
 
-async def _build_final_answer(query: str, result: dict[str, Any]) -> str:
-    if not result.get("answerable"):
-        return _not_answerable_message()
-    if settings.final_answer_mode != "llm":
-        return _fallback_answer(result)
+def _format_template(answer_config: dict[str, Any]) -> str:
+    blocks: list[str] = []
+    for section in _sections(answer_config):
+        label = str(section.get("label") or "").strip()
+        placeholder = "- ..." if section.get("kind") == "sources" or section.get("key") != "conclusion" else "..."
+        blocks.append(f"{label}：\n{placeholder}")
+    return "\n\n".join(blocks)
 
-    sources = _source_block(result)
-    source_lines = "\n".join(_source_lines(result)[:4])
+
+async def _build_final_answer(query: str, result: dict[str, Any]) -> str:
+    answer_config = _answer_config(result)
+    if not result.get("answerable"):
+        return _not_answerable_message(answer_config)
+    if settings.final_answer_mode != "llm":
+        return _fallback_answer(result, answer_config)
+
+    max_sources = int(answer_config.get("max_sources") or 4)
+    sources = _source_block(result, max_sources)
+    source_lines = "\n".join(_source_lines(result, max_sources))
+    labels = "、".join(str(item.get("label") or "") for item in _sections(answer_config))
+    instructions = "\n".join(
+        f"{index}. {item}" for index, item in enumerate(answer_config.get("instructions") or [], start=1)
+    )
+    format_template = _format_template(answer_config)
+    no_basis = str(answer_config.get("no_basis_text") or "未在正式 Wiki 中找到明确依据。")
     messages = [
         {
             "role": "system",
             "content": (
                 "你是企业内部正式 Wiki 回答器。只能使用用户提供的来源内容回答。"
-                "禁止使用来源以外的常识、规格、推测或补充说明。"
-                "回答必须中文、客观、简洁。必须保留来源中出现的限制条件、版本号、替代料号。"
-                "固定输出五个标题，顺序必须是：结论、适用场景、注意事项、可替代方案、来源。"
-                "每个标题都必须出现。除结论外，其余标题下使用短项目符号。"
-                "如果某个标题没有来源依据，必须写：未在正式 Wiki 中找到明确依据。"
-                "来源部分只列出实际使用过的来源路径和标题，不要列无关来源。"
+                f"必须按以下栏目及顺序输出：{labels}。"
+                f"\n领域回答规则：\n{instructions}"
             ),
         },
         {
@@ -161,30 +185,20 @@ async def _build_final_answer(query: str, result: dict[str, Any]) -> str:
                 f"问题：{query}\n\n"
                 f"来源列表：\n{source_lines}\n\n"
                 f"来源内容：\n{sources}\n\n"
-                "请严格按以下格式回答，不要增加其他标题：\n"
-                "结论：\n...\n\n"
-                "适用场景：\n- ...\n\n"
-                "注意事项：\n- ...\n\n"
-                "可替代方案：\n- ...\n\n"
-                "来源：\n- [1] path#heading\n\n"
-                "规则：\n"
-                "1. 结论必须直接回答问题。\n"
-                "2. 适用场景只写来源明确支持的场景。\n"
-                "3. 注意事项必须包含来源中的限制条件、固件版本、兼容要求。\n"
-                "4. 可替代方案只写来源明确提到的替代料号或方案。\n"
-                "5. 没有依据的栏目写：未在正式 Wiki 中找到明确依据。"
+                f"请严格按以下格式回答，不要增加其他标题：\n{format_template}\n\n"
+                f"没有来源依据的栏目必须写：{no_basis}"
             ),
         },
     ]
     try:
-        answer = await chat_complete(messages)
+        answer = await chat_complete(messages, max_tokens=int(answer_config.get("max_tokens") or 900))
     except Exception:
-        return _fallback_answer(result)
-    if _final_answer_is_invalid(answer):
-        return _fallback_answer(result)
+        return _fallback_answer(result, answer_config)
+    if _final_answer_is_invalid(answer, answer_config):
+        return _fallback_answer(result, answer_config)
     if _final_answer_has_no_basis(answer):
-        return _not_answerable_message()
-    return answer or _fallback_answer(result)
+        return _not_answerable_message(answer_config)
+    return answer or _fallback_answer(result, answer_config)
 
 
 @mcp.tool(
@@ -192,9 +206,9 @@ async def _build_final_answer(query: str, result: dict[str, Any]) -> str:
     title="Search LLM Wiki",
     description=(
         "Search and answer from the read-only Obsidian enterprise wiki. "
-        "For final user responses, use the returned final_answer verbatim or nearly "
-        "verbatim. Do not answer product knowledge questions from general model knowledge. "
-        "The final_answer already includes citations."
+        "Use domain to select an isolated knowledge domain; its registered profile controls "
+        "retrieval thresholds and answer format. For final user responses, use final_answer "
+        "verbatim or nearly verbatim. Do not answer from general model knowledge."
     ),
     structured_output=True,
 )
@@ -202,19 +216,29 @@ async def search_llm_wiki(
     query: str,
     product: str | None = None,
     tags: list[str] | None = None,
+    domain: str | None = None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     if not query or not query.strip():
         return {
             "answerable": False,
             "confidence": 0.0,
             "reason": "empty_query",
+            "domain": domain or "default",
+            "profile": profile,
             "citations": [],
             "chunks": [],
             "final_answer": "问题为空，无法检索正式 Wiki。",
             "response_contract": "Use final_answer as the user-facing answer.",
         }
     clean_query = query.strip()
-    result = await search(clean_query, product=product, tags=tags or [])
+    result = await search(
+        clean_query,
+        product=product,
+        tags=tags or [],
+        domain=domain,
+        profile=profile,
+    )
     result["final_answer"] = await _build_final_answer(clean_query, result)
     if _final_answer_has_no_basis(result["final_answer"]):
         _mark_no_supported_answer(clean_query, result)

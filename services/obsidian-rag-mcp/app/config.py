@@ -18,6 +18,7 @@ class Settings:
     litellm_base_url = os.getenv("LITELLM_BASE_URL", "http://127.0.0.1:14000/v1")
     litellm_api_key = os.getenv("LITELLM_API_KEY", "")
     model_settings_path = os.getenv("MODEL_SETTINGS_PATH", "/root/llm_wiki_hermes/config/model-settings.json")
+    domain_registry_path = os.getenv("DOMAIN_REGISTRY_PATH", "/root/llm_wiki_hermes/config/domains.yml")
     chat_model = os.getenv("CHAT_MODEL", "Qwen3.6-27B-FP8")
     embedding_model = os.getenv("EMBEDDING_MODEL", "Qwen3-Embedding-4B")
     reranker_model = os.getenv("RERANKER_MODEL", "Qwen3-Reranker-0.6B")

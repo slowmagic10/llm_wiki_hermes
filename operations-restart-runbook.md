@@ -1,6 +1,6 @@
 # LLM Wiki + Hermes 恢复操作手册
 
-更新时间：2026-07-02
+更新时间：2026-07-13
 
 本文档用于服务器重启、Docker 服务异常退出、手动升级镜像、或需要恢复整套 LLM Wiki + Hermes 服务时使用。
 
@@ -219,6 +219,24 @@ iptables -S INPUT | head -20
 cd /root/llm_wiki_hermes
 docker compose up -d
 docker compose ps
+```
+
+领域配置可在 Admin Web 的“领域管理”页面维护：先编辑并保存，再点击“应用入口配置”。页面提示需要重启时，在服务器执行 `docker restart hermes`。
+
+配置保存前的版本保存在 `config/domains.yml.bak`。如果页面不可用，使用下面的 CLI 检查领域注册表与运行时 Hermes hooks 是否一致：
+
+```bash
+cd /root/llm_wiki_hermes
+python3 bin/sync_hermes_domain_hooks.py --check
+```
+
+`--check` 返回 `status: ok` 时不需要改写 hook。若刚修改 `config/domains.yml` 或检查提示 drift，再执行：
+
+```bash
+cd /root/llm_wiki_hermes
+python3 bin/sync_hermes_domain_hooks.py
+python3 bin/sync_hermes_domain_hooks.py --check
+docker restart hermes
 ```
 
 如果只需要单独启动 Milvus 相关服务：
@@ -581,26 +599,34 @@ curl --noproxy "*" http://127.0.0.1:14000/v1/models \
 docker exec -it llm-wiki-postgres psql -U rag -d rag -c "select count(*) from documents; select count(*) from chunks;"
 ```
 
-### 6.3 `/wiki` 没有走正式 Wiki
+### 6.3 领域入口没有走正式 Wiki
 
-检查 hook：
+先校验注册表与生成的 hooks：
+
+```bash
+cd /root/llm_wiki_hermes
+python3 bin/sync_hermes_domain_hooks.py --check
+curl --noproxy "*" http://127.0.0.1:18090/api/domains
+```
+
+若检查提示 drift，重新生成并重启 Hermes：
+
+```bash
+cd /root/llm_wiki_hermes
+python3 bin/sync_hermes_domain_hooks.py
+python3 bin/sync_hermes_domain_hooks.py --check
+docker restart hermes
+```
+
+检查默认领域 hook 和 Hermes 加载日志：
 
 ```bash
 ls -l /root/.hermes/hooks/llm_wiki_router
 sed -n '1,180p' /root/.hermes/hooks/llm_wiki_router/handler.py
+tail -200 /root/.hermes/logs/gateway.log | grep -E "llm_wiki_router|installed domain=|hook\\(s\\) loaded|qqbot connected"
 ```
 
-检查 Hermes 是否加载 hook：
-
-```bash
-tail -200 /root/.hermes/logs/gateway.log | grep -E "llm_wiki_router|hook\\(s\\) loaded|qqbot connected"
-```
-
-重启 Hermes：
-
-```bash
-docker restart hermes
-```
+每个启用领域必须在 `config/domains.yml` 中使用唯一的 `entrypoint`、aliases 和 `hermes_hook`。
 
 ### 6.4 普通聊天总是提示“正式 Wiki 中没有检索到...”
 
@@ -717,7 +743,10 @@ docker compose build rag-api admin-web
 | `/root/llm_wiki_hermes/obsidian-wiki-config` | Admin 容器内 obsidian-wiki 持久配置 |
 | `/etc/obsidian-rag-mcp.env` | RAG/LiteLLM 环境变量和密钥 |
 | `/root/.hermes/config.yaml` | Hermes 配置 |
-| `/root/.hermes/hooks/llm_wiki_router` | QQBot `/wiki` 路由 hook |
+| `/root/llm_wiki_hermes/config/domains.yml` | 领域、profile、入口和 Hermes hook 注册表 |
+| `/root/llm_wiki_hermes/config/domains.yml.bak` | 网页保存前的领域注册表备份 |
+| `/root/llm_wiki_hermes/bin/sync_hermes_domain_hooks.py` | 根据注册表生成并校验独立领域 hooks |
+| `/root/.hermes/hooks/<hermes_hook>` | 各领域生成的 Hermes 固定入口 hook |
 | `/root/.hermes/logs/gateway.log` | Hermes 网关日志 |
 | `/root/llm_wiki_hermes/docs/wiki-frontmatter-schema.md` | Wiki frontmatter 规范 |
 
@@ -793,10 +822,12 @@ docker compose up -d postgres
 cd /root/llm_wiki_hermes
 docker compose up -d
 
+python3 bin/sync_hermes_domain_hooks.py --check
 docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "llm-wiki|hermes|litellm" || true
 
 curl --noproxy "*" http://127.0.0.1:18080/health
 curl --noproxy "*" http://127.0.0.1:18090/health
+curl --noproxy "*" http://127.0.0.1:18090/api/domains
 curl --noproxy "*" http://127.0.0.1:18090/api/wiki-health
 
 cat /root/llm_wiki_hermes/logs/llm-wiki-sync-status.json

@@ -2,7 +2,7 @@ const $ = (id) => document.getElementById(id);
 const pageInfo = {
   dashboard:['仪表盘','企业正式 Wiki 运行状态'],
   models:['模型配置','LiteLLM 可用模型与 RAG 运行模型'],
-  domains:['领域注册表','多领域知识库的管理侧注册表'],
+  domains:['领域管理','知识领域、Vault 边界与独立入口配置'],
   sync:['同步管理','Git 同步和索引刷新'],
   knowledgeMap:['知识地图','Wiki 结构和显式关系可视化'],
   rag:['RAG 测试','正式 Wiki 问答链路验证'],
@@ -21,7 +21,7 @@ function showTab(id){
   $('pageTitle').textContent=pageInfo[id]?.[0]||id;
   $('pageMeta').textContent=pageInfo[id]?.[1]||'';
   if(id === 'models') loadModelConfig();
-  if(id === 'domains') loadDomains();
+  if(id === 'domains' || id === 'rag') loadDomains();
   if(id === 'knowledgeMap') loadKnowledgeMap();
 }
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
@@ -214,8 +214,177 @@ async function saveModelConfig(){
     $('modelConfigRaw').textContent = String(e.stack || e);
   }
 }
+let domainRegistry = null;
+let editingDomainId = null;
+function splitDomainList(value){
+  return [...new Set(String(value || '').split(/[\n,，]/).map(item=>item.trim()).filter(Boolean))];
+}
+function showDomainAction(message, payload=null){
+  $('domainActionState').textContent = message;
+  const output = $('domainActionRaw');
+  if(payload === null){
+    output.classList.add('hidden');
+    output.textContent = '';
+    return;
+  }
+  output.classList.remove('hidden');
+  output.textContent = typeof payload === 'string' ? payload : pretty(payload);
+}
+function domainDefaults(){
+  const profile = Object.keys(domainRegistry?.profiles || {})[0] || 'product';
+  return {
+    display_name:'', description:'', profile, vault_subpath:'', target_vault_subpath:'',
+    isolation_mode:'domain_subpath', rag_base_url:'http://rag-api:18080',
+    sync_status_file:'/root/llm_wiki_hermes/logs/llm-wiki-sync-status.json',
+    vector_backend:'milvus', vector_collection:'llm_wiki_chunks_v2', entrypoint:'',
+    entrypoint_aliases:[], entrypoint_platforms:['qqbot'], hermes_hook:'',
+    hermes_rag_base_url:'http://127.0.0.1:18080', enabled:true
+  };
+}
+function setDomainField(id, value){
+  const element = $(id);
+  if(element) element.value = value ?? '';
+}
+function openDomainEditor(domainId=null){
+  if(!domainRegistry) return;
+  editingDomainId = domainId;
+  const cfg = domainId ? domainRegistry.domains?.[domainId] : domainDefaults();
+  if(!cfg) return;
+  const profileIds = Object.keys(domainRegistry.profiles || {});
+  $('domainProfile').innerHTML = profileIds.map(id=>'<option value="' + escapeHtml(id) + '">' + escapeHtml(domainRegistry.profiles[id]?.display_name || id) + '</option>').join('');
+  setDomainField('domainId', domainId || '');
+  $('domainId').disabled = !!domainId;
+  setDomainField('domainDisplayName', cfg.display_name);
+  setDomainField('domainDescription', cfg.description);
+  setDomainField('domainProfile', cfg.profile || profileIds[0] || '');
+  setDomainField('domainVaultSubpath', cfg.vault_subpath);
+  setDomainField('domainTargetVaultSubpath', cfg.target_vault_subpath);
+  setDomainField('domainIsolationMode', cfg.isolation_mode || 'domain_subpath');
+  setDomainField('domainEntrypoint', cfg.entrypoint);
+  setDomainField('domainAliases', (cfg.entrypoint_aliases || []).join('\n'));
+  setDomainField('domainPlatforms', (cfg.entrypoint_platforms || ['qqbot']).join(', '));
+  setDomainField('domainHermesHook', cfg.hermes_hook);
+  setDomainField('domainRagBaseUrl', cfg.rag_base_url || 'http://rag-api:18080');
+  setDomainField('domainHermesRagBaseUrl', cfg.hermes_rag_base_url || 'http://127.0.0.1:18080');
+  setDomainField('domainSyncStatusFile', cfg.sync_status_file || '/root/llm_wiki_hermes/logs/llm-wiki-sync-status.json');
+  setDomainField('domainVectorBackend', cfg.vector_backend || 'milvus');
+  setDomainField('domainVectorCollection', cfg.vector_collection || 'llm_wiki_chunks_v2');
+  $('domainEnabled').checked = cfg.enabled !== false;
+  $('domainMakeDefault').checked = domainId === domainRegistry.default_domain;
+  $('domainEditorTitle').textContent = domainId ? '编辑领域 · ' + domainId : '新增领域';
+  $('domainEditorPanel').classList.remove('hidden');
+  showDomainAction(domainId ? '正在编辑 ' + domainId : '填写新领域配置');
+  $('domainEditorPanel').scrollIntoView({behavior:'smooth', block:'start'});
+}
+function closeDomainEditor(){
+  editingDomainId = null;
+  $('domainEditorPanel').classList.add('hidden');
+  showDomainAction('等待操作');
+}
+function suggestDomainFields(){
+  if(editingDomainId) return;
+  const id = $('domainId').value.trim();
+  if(!id) return;
+  if(!$('domainVaultSubpath').value.trim()) setDomainField('domainVaultSubpath', 'domains/' + id);
+  if(!$('domainTargetVaultSubpath').value.trim()) setDomainField('domainTargetVaultSubpath', 'domains/' + id);
+  if(!$('domainEntrypoint').value.trim()) setDomainField('domainEntrypoint', '/' + id + 'wiki');
+  if(!$('domainHermesHook').value.trim()) setDomainField('domainHermesHook', 'llm_wiki_' + id.replace(/-/g, '_') + '_router');
+}
+function domainFormPayload(){
+  return {
+    display_name:$('domainDisplayName').value.trim(),
+    description:$('domainDescription').value.trim(),
+    profile:$('domainProfile').value,
+    vault_subpath:$('domainVaultSubpath').value.trim(),
+    target_vault_subpath:$('domainTargetVaultSubpath').value.trim(),
+    isolation_mode:$('domainIsolationMode').value,
+    rag_base_url:$('domainRagBaseUrl').value.trim(),
+    sync_status_file:$('domainSyncStatusFile').value.trim(),
+    vector_backend:$('domainVectorBackend').value,
+    vector_collection:$('domainVectorCollection').value.trim(),
+    entrypoint:$('domainEntrypoint').value.trim(),
+    entrypoint_aliases:splitDomainList($('domainAliases').value),
+    entrypoint_platforms:splitDomainList($('domainPlatforms').value),
+    hermes_hook:$('domainHermesHook').value.trim(),
+    hermes_rag_base_url:$('domainHermesRagBaseUrl').value.trim(),
+    enabled:$('domainEnabled').checked,
+    make_default:$('domainMakeDefault').checked
+  };
+}
+async function validateDomainConfig(){
+  const domainId = $('domainId').value.trim();
+  if(!domainId){
+    showDomainAction('请输入领域 ID', {ok:false, message:'domain_id is required'});
+    return;
+  }
+  showDomainAction('正在校验...');
+  try {
+    const data = await getJson('/api/domains/validate?domain_id=' + encodeURIComponent(domainId), {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(domainFormPayload())
+    });
+    showDomainAction(data.ok ? '校验通过' : '校验未通过', data);
+  } catch(e) {
+    showDomainAction('校验失败', String(e.stack || e));
+  }
+}
+async function saveDomainConfig(){
+  const domainId = $('domainId').value.trim();
+  if(!domainId){
+    showDomainAction('请输入领域 ID', {ok:false, message:'domain_id is required'});
+    return;
+  }
+  showDomainAction('正在保存...');
+  try {
+    const data = await getJson('/api/domains/' + encodeURIComponent(domainId), {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(domainFormPayload())
+    });
+    editingDomainId = domainId;
+    await loadDomains();
+    openDomainEditor(domainId);
+    showDomainAction('已保存；入口有变化时请点击“应用入口配置”', data);
+  } catch(e) {
+    showDomainAction('保存失败', String(e.stack || e));
+  }
+}
+async function applyDomainHooks(){
+  showDomainAction('正在生成并校验 Hermes hooks...');
+  try {
+    const data = await getJson('/api/domain-hooks/apply', {method:'POST'});
+    const message = data.restart_required
+      ? '入口配置已生成；请在服务器执行：' + data.restart_command
+      : '入口配置已是最新，无需重启 Hermes';
+    showDomainAction(message, data);
+    await loadDomains();
+  } catch(e) {
+    showDomainAction('入口配置应用失败', String(e.stack || e));
+  }
+}
+function syncRagProfile(){
+  if(!domainRegistry || !$('ragDomain') || !$('ragProfile')) return;
+  const domainId = $('ragDomain').value || domainRegistry.default_domain || 'default';
+  const configured = domainRegistry.domains?.[domainId]?.profile;
+  if(configured && [...$('ragProfile').options].some(option => option.value === configured)){
+    $('ragProfile').value = configured;
+  }
+}
+function populateRagProfiles(){
+  if(!domainRegistry || !$('ragDomain') || !$('ragProfile')) return;
+  const domains = domainRegistry.domains || {};
+  const profiles = domainRegistry.profiles || {};
+  $('ragDomain').innerHTML = Object.entries(domains)
+    .filter(([, cfg]) => cfg && cfg.enabled)
+    .map(([id, cfg]) => `<option value="${escapeHtml(id)}">${escapeHtml(cfg.display_name || id)}</option>`)
+    .join('');
+  $('ragProfile').innerHTML = Object.entries(profiles)
+    .map(([id, cfg]) => `<option value="${escapeHtml(id)}">${escapeHtml(cfg.display_name || id)}</option>`)
+    .join('');
+  $('ragDomain').value = domainRegistry.default_domain || Object.keys(domains)[0] || 'default';
+  syncRagProfile();
+}
 async function loadDomains(){
   const data = await getJson('/api/domains');
+  domainRegistry = data;
+  populateRagProfiles();
   $('domainsRaw').textContent = pretty(data);
   const summary = data.summary || {};
   $('domainRegistryPath').textContent = data.registry_path || '';
@@ -236,8 +405,10 @@ async function loadDomains(){
     const target = cfg.target_vault_status || {};
     const isolation = cfg.isolation_mode || '-';
     const targetText = cfg.target_vault_subpath ? `${cfg.target_vault_subpath} (${target.exists ? 'exists' : 'not ready'})` : '-';
+    const hook = cfg.hermes_hook_status || {};
+    const aliases = cfg.entrypoint_aliases || [];
     return `<div class="task-card">
-      <div class="task-top"><div><div class="task-title">${escapeHtml(cfg.display_name || id)}</div><div class="list-sub">${escapeHtml(id)} · profile=${escapeHtml(cfg.profile || '-')} · isolation=${escapeHtml(isolation)}</div></div>${badge(enabled ? 'ok' : 'warning', enabled ? 'enabled' : 'disabled')}</div>
+      <div class="task-top"><div><div class="task-title">${escapeHtml(cfg.display_name || id)}</div><div class="list-sub">${escapeHtml(id)} · profile=${escapeHtml(cfg.profile || '-')} · isolation=${escapeHtml(isolation)}</div></div><div class="domain-card-actions">${badge(enabled ? 'ok' : 'warning', enabled ? 'enabled' : 'disabled')}<button class="action" onclick="openDomainEditor('${q(id)}')">编辑</button></div></div>
       <div class="task-meta">
         <span>vault=${escapeHtml(cfg.vault_subpath || '-')} (${vault.exists ? 'exists' : 'missing'})</span>
         <span>target=${escapeHtml(targetText)}</span>
@@ -247,10 +418,31 @@ async function loadDomains(){
         <span>sync=${escapeHtml(cfg.sync_status_file || '-')}</span>
         <span>vector=${escapeHtml(cfg.vector_backend || '-')} / ${escapeHtml(collection)}</span>
         <span>entry=${escapeHtml(cfg.entrypoint || '-')}</span>
+        <span>aliases=${escapeHtml(aliases.join(', ') || '-')}</span>
+        <span>platforms=${escapeHtml((cfg.entrypoint_platforms || []).join(', ') || '-')}</span>
+        <span>hook=${escapeHtml(cfg.hermes_hook || '-')} (${hook.ready ? 'ready' : 'not ready'})</span>
+        <span>fixed_api=${escapeHtml(cfg.isolated_answer_url || '-')}</span>
       </div>
       ${cfg.description ? `<div class="list-sub" style="margin-top:8px">${escapeHtml(cfg.description)}</div>` : ''}
     </div>`;
   }).join('') : '<div class="empty">未定义领域</div>';
+  const profiles = data.profiles || {};
+  $('profileList').innerHTML = Object.entries(profiles).length ? Object.entries(profiles).map(([id, cfg]) => {
+    const retrieval = cfg.retrieval || {};
+    const answer = cfg.answer || {};
+    const sections = (answer.sections || []).map(item => item.label).filter(Boolean).join(' / ');
+    return `<div class="task-card">
+      <div class="task-top"><div><div class="task-title">${escapeHtml(cfg.display_name || id)}</div><div class="list-sub">profile=${escapeHtml(id)}</div></div>${badge('ok', 'active')}</div>
+      <div class="task-meta">
+        <span>vector_top_k=${escapeHtml(retrieval.vector_top_k ?? '-')}</span>
+        <span>fts_top_k=${escapeHtml(retrieval.fts_top_k ?? '-')}</span>
+        <span>rerank_top_k=${escapeHtml(retrieval.rerank_top_k ?? '-')}</span>
+        <span>threshold=${escapeHtml(retrieval.answerable_threshold ?? '-')}</span>
+        <span>sources=${escapeHtml(answer.max_sources ?? '-')}</span>
+      </div>
+      <div class="list-sub" style="margin-top:8px">答案栏目：${escapeHtml(sections || '-')}</div>
+    </div>`;
+  }).join('') : '<div class="empty">未定义 profile</div>';
   const issues = data.issues || [];
   $('domainIssueCount').outerHTML = badge(issues.length ? (summary.errors ? 'failed' : 'warning') : 'ok', `${issues.length} 项`).replace('<span','<span id="domainIssueCount"');
   $('domainIssues').innerHTML = issues.length ? `<div class="task-list">${issues.map(item=>`<div class="task-card"><div class="task-top"><div class="task-title">${escapeHtml(item.domain || '-')} · ${escapeHtml(item.code || '-')}</div>${badge(item.severity === 'error' ? 'failed' : 'warning', item.severity || '-')}</div><div class="task-meta"><span>${escapeHtml(item.message || '')}</span></div></div>`).join('')}</div>` : '<div class="empty">领域注册表校验通过</div>';
@@ -630,7 +822,11 @@ async function testRag(){
   $('citationCount').textContent='0';
   $('ragMeta').innerHTML='';
   try{
-    const data=await getJson('/api/rag-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query})});
+    const data=await getJson('/api/rag-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      query,
+      domain: $('ragDomain')?.value || null,
+      profile: $('ragProfile')?.value || null
+    })});
     $('ragResult').textContent=pretty(data);
     const answerable = !!data.answerable;
     const status = answerable ? 'ok' : 'failed';
@@ -638,7 +834,9 @@ async function testRag(){
     $('ragMeta').innerHTML = [
       mini('answerable', answerable ? 'true' : 'false', status),
       mini('confidence', data.confidence ?? '-', answerable ? 'ok' : 'failed'),
-      mini('reason', data.reason || '-', answerable ? 'ok' : 'failed')
+      mini('reason', data.reason || '-', answerable ? 'ok' : 'failed'),
+      mini('domain', data.domain || '-', 'ok'),
+      mini('profile', data.profile || '-', 'ok')
     ].join('');
     $('ragAnswer').className = 'answer-box';
     $('ragAnswer').textContent = data.final_answer || '无 final_answer';

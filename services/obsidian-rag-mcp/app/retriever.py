@@ -6,22 +6,48 @@ from psycopg2.extras import RealDictCursor, Json
 from app.config import settings
 from app.db import get_conn, vector_literal
 from app.models_client import embed_text, rerank
+from app.profiles import resolve_profile
 from app.vector_store import milvus_enabled, search_vectors
 
 
-RERANK_ONLY_ANSWERABLE_THRESHOLD = 0.85
-
-
-async def search(query: str, product: str | None = None, tags: list[str] | None = None) -> dict[str, Any]:
+async def search(
+    query: str,
+    product: str | None = None,
+    tags: list[str] | None = None,
+    domain: str | None = None,
+    profile: str | None = None,
+) -> dict[str, Any]:
+    profile_config = resolve_profile(domain, profile)
+    retrieval = profile_config["retrieval"]
     query_embedding = await embed_text(query)
-    candidates = _collect_candidates(query, query_embedding, product, tags or [])
+    candidates = _collect_candidates(query, query_embedding, product, tags or [], profile_config)
 
+    base_result = {
+        "domain": profile_config["domain"],
+        "profile": profile_config["id"],
+        "retrieval_profile": {
+            "vector_top_k": retrieval["vector_top_k"],
+            "fts_top_k": retrieval["fts_top_k"],
+            "pre_rerank_top_k": retrieval["pre_rerank_top_k"],
+            "rerank_top_k": retrieval["rerank_top_k"],
+            "answerable_threshold": retrieval["answerable_threshold"],
+        },
+    }
     if not candidates:
         _record_gap(query, "没有检索到候选来源")
         _record_audit(query, False, 0.0, [])
-        return {"answerable": False, "confidence": 0.0, "reason": "no_candidates", "citations": [], "chunks": []}
+        return {
+            **base_result,
+            "answerable": False,
+            "confidence": 0.0,
+            "reason": "no_candidates",
+            "citations": [],
+            "chunks": [],
+        }
 
-    pre_ranked = sorted(candidates.values(), key=lambda item: item["rule_score"], reverse=True)[:20]
+    pre_ranked = sorted(candidates.values(), key=lambda item: item["rule_score"], reverse=True)[
+        : retrieval["pre_rerank_top_k"]
+    ]
     scores = await rerank(query, [item["text"] for item in pre_ranked])
     for item, score in zip(pre_ranked, scores):
         item["rerank_score"] = score
@@ -33,10 +59,13 @@ async def search(query: str, product: str | None = None, tags: list[str] | None 
         key=lambda item: (item["final_score"], item["rerank_score"], item["rule_score"]),
         reverse=True,
     )
-    top = ranked[: settings.rerank_top_k]
+    top = ranked[: retrieval["rerank_top_k"]]
     confidence = float(top[0]["final_score"]) if top else 0.0
-    has_supported_evidence = bool(top and _has_supported_evidence(top[0]))
-    answerable = bool(top and confidence >= settings.answerable_threshold and has_supported_evidence)
+    has_supported_evidence = bool(
+        top and _has_supported_evidence(top[0], float(retrieval["rerank_only_answerable_threshold"]))
+    )
+    threshold = float(retrieval["answerable_threshold"])
+    answerable = bool(top and confidence >= threshold and has_supported_evidence)
 
     citations = [
         {"path": item["path"], "heading": " > ".join(item["heading_path"]), "score": item["final_score"]}
@@ -44,7 +73,7 @@ async def search(query: str, product: str | None = None, tags: list[str] | None 
     ]
 
     if not answerable:
-        if top and confidence >= settings.answerable_threshold and not has_supported_evidence:
+        if top and confidence >= threshold and not has_supported_evidence:
             reason = "no_supported_evidence"
             gap_reason = "没有足够的词面或强语义证据支持回答"
         else:
@@ -56,6 +85,7 @@ async def search(query: str, product: str | None = None, tags: list[str] | None 
     _record_audit(query, answerable, confidence, citations)
 
     return {
+        **base_result,
         "answerable": answerable,
         "confidence": confidence,
         "reason": reason,
@@ -64,16 +94,22 @@ async def search(query: str, product: str | None = None, tags: list[str] | None 
     }
 
 
-def _collect_candidates(query: str, query_embedding: list[float], product: str | None, tags: list[str]) -> dict[str, dict[str, Any]]:
+def _collect_candidates(
+    query: str,
+    query_embedding: list[float],
+    product: str | None,
+    tags: list[str],
+    profile_config: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
     candidates: dict[str, dict[str, Any]] = {}
-    _merge_candidates(candidates, _fts_candidates(query, product, tags), "fts_score")
-    _merge_candidates(candidates, _vector_candidates(query_embedding, product, tags), "vector_score")
+    _merge_candidates(candidates, _fts_candidates(query, product, tags, profile_config), "fts_score")
+    _merge_candidates(candidates, _vector_candidates(query_embedding, product, tags, profile_config), "vector_score")
     for item in candidates.values():
         item["rule_score"] = _rule_score(item, query, tags)
     return candidates
 
 
-def _metadata_filter(product: str | None, tags: list[str]) -> tuple[str, list[Any]]:
+def _metadata_filter(product: str | None, tags: list[str], vault_subpath: str) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
     if product:
@@ -82,11 +118,20 @@ def _metadata_filter(product: str | None, tags: list[str]) -> tuple[str, list[An
     if tags:
         clauses.append("and d.tags && %s")
         params.append(tags)
+    if vault_subpath != ".":
+        clauses.append("and c.path like %s")
+        params.append(vault_subpath.rstrip("/") + "/%")
     return "\n".join(clauses), params
 
 
-def _fts_candidates(query: str, product: str | None, tags: list[str]) -> list[dict[str, Any]]:
-    where, params = _metadata_filter(product, tags)
+def _fts_candidates(
+    query: str,
+    product: str | None,
+    tags: list[str],
+    profile_config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    where, params = _metadata_filter(product, tags, profile_config["vault_subpath"])
+    limit = profile_config["retrieval"]["fts_top_k"]
     sql = f"""
         select c.id::text as id, c.path, c.heading_path, c.text, c.metadata,
                ts_rank_cd(c.fts, plainto_tsquery('simple', %s)) as fts_score,
@@ -100,27 +145,41 @@ def _fts_candidates(query: str, product: str | None, tags: list[str]) -> list[di
     """
     with get_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, (query, query, *params, settings.search_fts_top_k))
+            cur.execute(sql, (query, query, *params, limit))
             return list(cur.fetchall())
 
 
-def _vector_candidates(query_embedding: list[float], product: str | None, tags: list[str]) -> list[dict[str, Any]]:
+def _vector_candidates(
+    query_embedding: list[float],
+    product: str | None,
+    tags: list[str],
+    profile_config: dict[str, Any],
+) -> list[dict[str, Any]]:
     if milvus_enabled():
         try:
-            return _milvus_vector_candidates(query_embedding, product, tags)
+            return _milvus_vector_candidates(query_embedding, product, tags, profile_config)
         except Exception:
-            return _pgvector_candidates(query_embedding, product, tags)
-    return _pgvector_candidates(query_embedding, product, tags)
+            return _pgvector_candidates(query_embedding, product, tags, profile_config)
+    return _pgvector_candidates(query_embedding, product, tags, profile_config)
 
 
-def _milvus_vector_candidates(query_embedding: list[float], product: str | None, tags: list[str]) -> list[dict[str, Any]]:
-    hits = search_vectors(query_embedding, settings.search_vector_top_k * 3 if (product or tags) else settings.search_vector_top_k)
+def _milvus_vector_candidates(
+    query_embedding: list[float],
+    product: str | None,
+    tags: list[str],
+    profile_config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    retrieval = profile_config["retrieval"]
+    vector_top_k = retrieval["vector_top_k"]
+    needs_filter = bool(product or tags or profile_config["vault_subpath"] != ".")
+    hit_limit = vector_top_k * retrieval["milvus_filter_multiplier"] if needs_filter else vector_top_k
+    hits = search_vectors(query_embedding, hit_limit)
     if not hits:
         return []
 
     scores = {hit["id"]: float(hit.get("vector_score") or 0.0) for hit in hits}
     ids = list(scores.keys())
-    where, params = _metadata_filter(product, tags)
+    where, params = _metadata_filter(product, tags, profile_config["vault_subpath"])
     sql = f"""
         select c.id::text as id, c.path, c.heading_path, c.text, c.metadata,
                0.0 as fts_score,
@@ -133,7 +192,7 @@ def _milvus_vector_candidates(query_embedding: list[float], product: str | None,
     """
     with get_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, (ids, *params, settings.search_vector_top_k))
+            cur.execute(sql, (ids, *params, vector_top_k))
             rows = list(cur.fetchall())
     by_id = {row["id"]: row for row in rows}
     ranked: list[dict[str, Any]] = []
@@ -143,13 +202,19 @@ def _milvus_vector_candidates(query_embedding: list[float], product: str | None,
             continue
         row["vector_score"] = scores.get(chunk_id, 0.0)
         ranked.append(row)
-        if len(ranked) >= settings.search_vector_top_k:
+        if len(ranked) >= vector_top_k:
             break
     return ranked
 
 
-def _pgvector_candidates(query_embedding: list[float], product: str | None, tags: list[str]) -> list[dict[str, Any]]:
-    where, params = _metadata_filter(product, tags)
+def _pgvector_candidates(
+    query_embedding: list[float],
+    product: str | None,
+    tags: list[str],
+    profile_config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    where, params = _metadata_filter(product, tags, profile_config["vault_subpath"])
+    limit = profile_config["retrieval"]["vector_top_k"]
     sql = f"""
         select c.id::text as id, c.path, c.heading_path, c.text, c.metadata,
                0.0 as fts_score,
@@ -164,7 +229,7 @@ def _pgvector_candidates(query_embedding: list[float], product: str | None, tags
     vector = vector_literal(query_embedding)
     with get_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, (vector, *params, vector, settings.search_vector_top_k))
+            cur.execute(sql, (vector, *params, vector, limit))
             return list(cur.fetchall())
 
 
@@ -245,10 +310,10 @@ def _lexical_score(item: dict[str, Any], query: str) -> float:
     return 0.0
 
 
-def _has_supported_evidence(item: dict[str, Any]) -> bool:
+def _has_supported_evidence(item: dict[str, Any], rerank_only_threshold: float) -> bool:
     if float(item.get("lexical_score") or 0.0) > 0.0:
         return True
-    if float(item.get("rerank_score") or 0.0) >= RERANK_ONLY_ANSWERABLE_THRESHOLD:
+    if float(item.get("rerank_score") or 0.0) >= rerank_only_threshold:
         return True
     return False
 

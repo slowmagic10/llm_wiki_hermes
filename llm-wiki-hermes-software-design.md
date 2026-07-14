@@ -917,7 +917,7 @@ allowed_groups: [internal]
 
 当前系统第一版仍然以内部业务产品知识库为落地场景，但架构目标不是只服务业务场景。后续可以扩展到 HR 制度库、运维手册库、法务知识库、研发知识库等正式知识库场景。
 
-本节只定义未来演进边界。当前阶段不迁移生产 Vault 目录、不拆数据库、不切换 Milvus、不新增多领域 Hermes hook、不改运行服务。
+当前已完成 Vault domain 子目录迁移、Milvus 接入、领域注册表、检索与答案 profile 化以及多领域入口隔离。数据库、Milvus collection 和 RAG 实例目前仍可共享，但查询强制按注册表中的 `vault_subpath` 隔离；每个启用领域通过独立 Hermes hook 调用固定领域 API，调用方不能在请求体中切换领域。独立 collection 和独立 RAG 实例留到数据规模或权限边界需要时再启用。
 
 ### 22.1 设计定位
 
@@ -1087,6 +1087,10 @@ domains:
     vector_backend: milvus
     vector_collection: llm_wiki_chunks_v2
     entrypoint: /wiki
+    entrypoint_aliases: [/llmwiki, "wiki:", "wiki：", "llmwiki:", "llmwiki："]
+    entrypoint_platforms: [qqbot]
+    hermes_hook: llm_wiki_router
+    hermes_rag_base_url: http://127.0.0.1:18080
     enabled: true
 
   ops:
@@ -1097,7 +1101,7 @@ domains:
     enabled: false
 ```
 
-第一版 `domains.yml` 只作为 Admin 领域注册表，不作为 RAG、hook、sync-runner 的全系统配置中心。当前 Admin Web 已提供只读接口 `/api/domains` 和页面“领域注册表”，并在 `/api/health-detail` 中检查 `domain_registry`。
+`domains.yml` 已同时作为 Admin 领域注册表和 RAG profile 配置来源。HTTP `/rag/search`、`/rag/answer` 与 MCP `search_llm_wiki` 均接受可选的 `domain`、`profile` 参数；未传入时使用 `default_domain` 及该领域注册的 profile。检索会按 `vault_subpath` 限制 FTS、pgvector/Milvus 回表结果，并读取 profile 的候选数、rerank 数和可回答阈值。答案生成会读取 profile 的栏目顺序、领域指令、最大来源数和输出 token 上限。Admin Web 已提供只读接口 `/api/domains`、领域/profile 展示和 RAG 测试选择器，并在 `/api/health-detail` 中检查 `domain_registry`。
 
 ### 22.5 frontmatter 策略
 
@@ -1197,7 +1201,7 @@ Milvus instance:
 
 ### 22.7 多领域服务隔离
 
-未来多领域运行时采用“共享代码镜像，不同实例配置”的方式：
+当前先采用“独立用户入口 + 固定领域 API + `vault_subpath` 强制过滤”，共享 RAG 实例、数据库和 collection；达到权限或容量边界后，再升级为“共享代码镜像，不同实例配置”：
 
 ```text
 shared image:
@@ -1216,15 +1220,15 @@ shared image:
 
 原则：
 
-1. 不同领域独立数据库或独立 schema。
-2. 不同领域独立 vector collection。
-3. 不同领域独立 RAG 服务端口。
-4. 不同领域独立 Hermes hook。
+1. 当前每个领域使用独立 Hermes hook 和唯一触发词。
+2. 用户 hook 只调用 `/rag/domains/{domain}/answer`，请求体不能覆盖 `domain/profile`。
+3. 检索结果必须属于该领域 `vault_subpath`，不跨领域回退。
+4. 独立数据库/schema、vector collection 和 RAG 端口属于后续物理隔离选项。
 5. 不同领域 gaps 在领域内记录，统一 Admin 聚合展示。
 
 ### 22.8 Hermes hook 策略
 
-用户侧入口按领域隔离，不做自动跨领域路由。
+用户侧入口按领域隔离，不做自动跨领域路由。`bin/sync_hermes_domain_hooks.py` 根据 `config/domains.yml` 为每个启用领域生成独立 hook。
 
 示例：
 
@@ -1242,6 +1246,21 @@ hr_wiki_router    -> hr RAG
 /opswiki   # 未来 ops
 /hrwiki    # 未来 hr
 ```
+
+Admin Web 的“领域管理”页面支持新增、编辑、启用或停用领域，保存前会检查领域 ID、profile、Vault 路径重叠、入口冲突和 hook 名冲突。保存采用原子替换，并在 `config/domains.yml.bak` 保留上一次配置。
+
+网页中的“应用入口配置”会生成并校验 hooks。若页面返回 `restart_required=true`，管理员再在服务器执行 `docker restart hermes`；Admin 不挂载 Docker socket，不直接控制宿主容器。
+
+CLI 回退方式：
+
+```bash
+cd /root/llm_wiki_hermes
+python3 bin/sync_hermes_domain_hooks.py
+python3 bin/sync_hermes_domain_hooks.py --check
+docker restart hermes
+```
+
+生成器会拒绝重复触发词、重复 hook 名和不安全标识。生成的 hook 只发送 `query`，并校验响应中的 `domain` 和 `entrypoint_isolated=true`。
 
 原则：
 
@@ -1267,7 +1286,14 @@ Admin Portal:
   各领域 schema health
 ```
 
-当前阶段只有一个管理员，不实现复杂 RBAC。第一版管理侧可以采用单管理员模式：
+当前已落地统一领域管理页面和 API：
+
+1. `POST /api/domains/validate`：只校验候选配置。
+2. `PUT /api/domains/{domain_id}`：校验通过后原子保存。
+3. `POST /api/domain-hooks/apply`：生成、清理停用入口并再次校验 hooks。
+4. Profiles 当前只读，避免在同一表单中混合领域边界与复杂检索参数。
+
+当前阶段只有一个管理员，不实现复杂 RBAC。后续对 Admin 开放更广网络访问前，应增加 basic/token 认证。第一版管理侧可以采用单管理员模式：
 
 ```text
 ADMIN_AUTH_MODE=basic 或 token
@@ -1290,6 +1316,15 @@ ADMIN_USER=nick
 
 ```json
 {
+  "domain": "default",
+  "profile": "product",
+  "retrieval_profile": {
+    "vector_top_k": 30,
+    "fts_top_k": 30,
+    "pre_rerank_top_k": 20,
+    "rerank_top_k": 8,
+    "answerable_threshold": 0.5
+  },
   "answerable": true,
   "confidence": 0.8,
   "reason": "found_reliable_sources",
@@ -1330,21 +1365,25 @@ hr profile:
 来源
 ```
 
-### 22.11 当前阶段明确不做
+### 22.11 当前阶段边界
 
-当前阶段不做：
+当前已落地：
 
-1. 不迁移当前业务 Vault 到 `domains/default`。
-2. 不拆当前数据库。
-3. 不上线 Milvus。
-4. 不新增多领域 RAG 实例。
-5. 不新增多领域 Hermes hook。
-6. 不实现统一 Admin 多领域管理。
-7. 不实现复杂 RBAC。
-8. 不实现完整 VectorStore adapter。
-9. 不做模型通用建议入口。
+1. Vault 按 `domains/<domain>` 隔离并完成 `default` 迁移。
+2. Milvus 作为当前向量后端。
+3. Admin 可校验并原子保存领域配置、应用独立入口，同时只读展示检索/答案 profiles。
+4. RAG HTTP、Admin 测试和 Hermes MCP 工具支持 `domain/profile`。
+5. 检索强制按领域 `vault_subpath` 过滤，答案格式与阈值由 profile 驱动。
+6. 固定领域 API 禁止请求体切换领域，脚本按注册表生成并校验独立 Hermes hooks。
 
-当前阶段只把上述原则写入设计文档和待办，保证当前通用第一版稳定运行。
+当前仍不做：
+
+1. 不拆当前 PostgreSQL 数据库。
+2. 不为每个领域强制建立独立 Milvus collection 或独立 RAG 实例。
+3. 不在保存注册表后自动重启 Hermes；管理员显式生成、校验并重启。
+4. 不实现复杂 RBAC。
+5. 不实现完整 VectorStore adapter。
+6. 不做模型通用建议入口。
 
 ## 23. 文档标准化入库助手
 
