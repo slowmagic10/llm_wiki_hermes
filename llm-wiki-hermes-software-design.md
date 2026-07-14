@@ -5,19 +5,19 @@
 | 项目 | 内容 |
 | --- | --- |
 | 文档名称 | LLM Wiki + Hermes 软件设计文档 |
-| 版本 | v0.1 |
-| 日期 | 2026-06-17 |
-| 阶段 | 第一版设计 |
-| 目标用户 | 内部业务用户 |
+| 版本 | v0.4 |
+| 日期 | 2026-07-14 |
+| 阶段 | 基础能力已部署，多领域能力持续演进 |
+| 目标用户 | 企业内部知识库用户与管理员 |
 | 主要知识源 | Obsidian Markdown |
 | 最终对话入口 | Hermes Agent |
-
 ## 2. 背景
 
-当前目标是构建一套面向内部业务团队咨询的内部产品知识问答系统。系统需要基于稳定的产品知识回答问题，并且所有知识类回答必须可追溯到 Obsidian Wiki 中的 Markdown 来源。
+系统用于构建企业内部正式知识问答底座。产品与售前知识是第一个落地领域，但核心能力按多领域设计，可扩展到运维、HR、法务和研发等稳定知识场景。
 
-用户已经具备本地模型部署能力，并已通过 LiteLLM 接入模型网关。因此本设计不展开模型部署细节，重点设计 Hermes、Obsidian Wiki、RAG 检索层和 Docker 化组件组合。
+所有正式知识回答必须可追溯到 Obsidian Vault 中经人工确认的 Markdown。模型部署由现有 LiteLLM 统一提供；本系统负责知识维护、增量索引、混合检索、rerank、可回答性门控、固定领域入口和管理控制台。
 
+当前实现以 Hermes 独立领域 hook 作为用户侧入口，以固定领域 REST API 作为正式问答主链路；MCP Bridge 保留给内部 agent 或其他工具集成，不是当前 `/wiki` 的必需路径。
 ## 3. 设计目标
 
 第一版完成后应满足：
@@ -54,56 +54,62 @@
 
 ## 5. 总体架构
 
+正式用户问答链路：
+
 ```text
-企业微信 / CLI / Web
+QQBot / CLI / 未来企业微信
         ↓
-Hermes llm-wiki profile
+Hermes 独立领域 hook
+        ↓
+POST /rag/domains/{domain}/answer
+        ↓
+领域注册表固定 domain + profile
+        ↓
+Postgres 元数据与 FTS + Milvus 向量召回
+        ↓
+0.6B reranker + 可回答性门控
+        ↓
+来源约束答案
+```
+
+管理链路：
+
+```text
+Admin Web
+  ├─ 健康检查 / 模型配置 / 领域管理
+  ├─ Git Pull + RAG 同步
+  ├─ 文档浏览 / PDF 与 Markdown 草稿标准化
+  ├─ RAG 测试 / 知识缺口 / 审计
+  └─ obsidian-wiki 状态与离线维护入口
+```
+
+可选 agent 集成链路：
+
+```text
+Hermes 或其他 Agent
         ↓ MCP
-Obsidian RAG MCP Server
+MCP Bridge :18081
         ↓
-Postgres + pgvector + FTS
-        ↓
-只读挂载 Obsidian Vault
+RAG 服务
 ```
 
-离线维护链路：
+离线知识维护链路：
 
 ```text
-人工触发 / 定期检查
-        ↓
-obsidian-wiki skills
-        ↓
-Wiki lint / cross-link / tag taxonomy / ingest 建议
-        ↓
-系统侧维护报告或对话中展示建议
-        ↓
-人工修改 Obsidian Markdown
-        ↓
-下一次 RAG 同步
+本地 Obsidian 人工编辑
+        ↓ Git push
+服务器 Vault 部署副本
+        ↓ 每日 sync-runner 或 Admin 手动同步
+RAG 增量索引
 ```
 
-模型调用链路：
+模型调用统一经过 LiteLLM：
 
 ```text
-Hermes
-  ↓
-LiteLLM
-  ↓
-本地对话模型
-
-Obsidian RAG MCP Server
-  ↓
-LiteLLM
-  ↓
-Embedding 模型
-
-Obsidian RAG MCP Server
-  ↓
-LiteLLM 或本地 reranker endpoint
-  ↓
-0.6B reranker
+RAG answer -> 对话模型
+RAG indexing -> Embedding 模型
+RAG retrieval -> 0.6B Reranker
 ```
-
 ## 6. 组件设计
 
 ### 6.1 Hermes Agent
@@ -111,19 +117,19 @@ LiteLLM 或本地 reranker endpoint
 职责：
 
 1. 作为最终对话入口。
-2. 承接企业微信、CLI 或 Web 入口。
-3. 使用独立 `llm-wiki` profile。
-4. 通过 MCP 调用 Obsidian RAG MCP Server。
-5. 基于 RAG 返回的 chunks 和 citations 组织最终答案。
-6. 在无来源时拒绝回答知识问题。
+2. 承接 QQBot、CLI 和未来企业微信 adapter。
+3. 为每个知识领域加载独立生成式 hook。
+4. 只在用户显式使用领域触发词时调用固定领域 RAG endpoint。
+5. 校验响应 `domain` 与 `entrypoint_isolated=true`。
+6. 普通聊天继续走 Hermes 原有链路，不自动触发 Wiki。
 
 不负责：
 
-1. 不负责索引 Obsidian。
-2. 不负责写入 Obsidian。
-3. 不负责长期记忆沉淀。
-4. 不负责直接访问数据库。
-
+1. 不索引或修改 Obsidian。
+2. 不直接访问数据库或向量库。
+3. 不使用长期 memory 沉淀 Wiki 查询。
+4. 不由模型自动判断或切换知识领域。
+5. 不绕过 RAG 来源约束补充模型常识。
 ### 6.2 LiteLLM
 
 职责：
@@ -137,65 +143,49 @@ LiteLLM 或本地 reranker endpoint
 
 职责：
 
-1. 保存稳定产品知识。
+1. 保存稳定且经人工确认的正式知识。
 2. 作为系统唯一事实来源。
-3. 由人工维护 Markdown 文件。
+3. 在一个 Vault 内按 `domains/<domain>` 隔离知识。
+4. 通过独立 Git 仓库维护和同步。
 
 约束：
 
-1. Docker 中只读挂载。
-2. 不保存 Hermes 运行日志。
-3. 不保存聊天历史。
-4. 不保存知识缺口报告。
-5. 不保存质量检查报告。
+1. RAG API 与 MCP Bridge 只读挂载 Vault。
+2. Admin 与 sync-runner 仅为 Git 同步、文档维护流程保留受控写权限。
+3. Hermes、模型推理和 obsidian-wiki 不自动写入正式 Markdown。
+4. 不保存聊天历史、运行日志、知识缺口或数据库文件。
+5. 正式文档位于 `domains/<domain>/10_Knowledge`。
+6. 草稿和归档分别使用 `00_Templates` 与 `90_Archive`。
 
-建议目录：
+详细维护流程参见 `docs/obsidian-vault-maintenance-guide.md`。
+### 6.4 Obsidian RAG 服务与 MCP Bridge
 
-```text
-10_Knowledge/
-  Products/
-    产品A/
-      功能概览.md
-      集成方式.md
-      部署形态.md
-      常见问题.md
-  Business/
-    Scenarios/
-    FAQ/
-90_Archive/
-Templates/
-Assets/
-```
-
-### 6.4 Obsidian RAG MCP Server
-
-实现建议：
+实现：
 
 ```text
-Python + FastAPI + FastMCP
+Python + FastAPI + MCP Bridge
 ```
 
 职责：
 
-1. 每日扫描 Obsidian Vault。
-2. 执行只读 Wiki 质量检查。
-3. 解析 Markdown、frontmatter、tags、双链和标题层级。
-4. 对 Markdown 进行 chunk。
-5. 调用 LiteLLM 生成 embedding。
-6. 写入 Postgres + pgvector + FTS。
-7. 执行混合检索。
-8. 命中 FAQ/业务场景页时扩展读取双链指向的产品事实页。
-9. 调用 0.6B reranker。
-10. 根据 reranker 分数判断是否可回答。
-11. 通过 MCP 向 Hermes 暴露工具。
-12. 在无来源时记录系统侧知识缺口。
+1. 解析 Markdown、frontmatter、标题层级、tags 和显式双链。
+2. 按文件 hash 执行增量索引并处理删除。
+3. 生成 chunks 并通过 LiteLLM 调用 embedding 模型。
+4. 将 documents、chunks metadata、FTS、状态、缺口和审计写入 Postgres。
+5. 将向量写入 Milvus；pgvector 保留为兼容或轻量 fallback。
+6. 执行 FTS + Milvus 混合召回。
+7. 调用 0.6B reranker。
+8. 根据领域 profile 进行阈值和答案结构选择。
+9. 执行可回答性门控。
+10. 生成只基于正式来源的最终答案。
+11. 暴露通用 REST、固定领域 REST、管理同步 API 和 MCP 工具。
+12. 无可靠来源时只记录系统侧知识缺口。
 
 不负责：
 
-1. 不生成最终自然语言答案。
-2. 不写入 Obsidian Markdown。
-3. 不承担 Hermes 的会话管理。
-
+1. 不处理 Hermes 会话和平台连接。
+2. 不写回 Obsidian Markdown。
+3. 不自动判断用户应进入哪个领域。
 ### 6.5 Postgres + pgvector + FTS
 
 职责：
@@ -427,53 +417,40 @@ rag: false
 
 ## 9. 同步流程
 
-每日同步由 Obsidian RAG MCP Server 内置 scheduler 触发。
+当前由 Docker 服务 `llm-wiki-sync-runner` 每 86400 秒执行一次：
 
 ```text
-每日定时任务
+git pull --ff-only
   ↓
-扫描 Obsidian Vault
+POST http://rag-api:18080/admin/sync/run
   ↓
-读取 indexed_files
+扫描启用领域的 Vault 子目录
   ↓
-计算文件 hash / mtime
+计算文件 hash
   ↓
-识别新增、修改、删除、排除文件
+识别新增、修改、删除和跳过文件
   ↓
-执行只读 Wiki 质量检查
+解析 Markdown 与 frontmatter
   ↓
-增量解析 Markdown
+调用 LiteLLM embedding
   ↓
-生成 chunks
+更新 Postgres 元数据与 FTS
   ↓
-调用 LiteLLM embedding API
+更新 Milvus 向量
   ↓
-写入 Postgres + pgvector + FTS
-  ↓
-保存同步状态和质量报告
+保存同步状态和日志
 ```
 
-如果启用 `obsidian-wiki` 离线维护任务，则它在 RAG 同步之前或人工维护时运行：
+管理员也可以在 Admin Web“同步管理”执行“Git Pull + 重新索引”。
 
-```text
-obsidian-wiki skills
-  ↓
-生成维护建议
-  ↓
-人工确认并修改 Markdown
-  ↓
-RAG MCP Server 下一次同步
-```
+同步边界：
 
-注意：`obsidian-wiki` 的输出不直接进入 RAG 索引，只有人工修改后的 Markdown 才进入下一次同步。
-
-失败策略：
-
-1. 单个文件失败不影响整体同步。
-2. 失败文件记录到 `indexed_files.error`。
-3. 下一轮同步继续重试。
-4. 删除或移出索引目录的文件，需要删除对应 documents 和 chunks。
-
+1. 只有 Git 仓库中的 Markdown 是正式输入。
+2. obsidian-wiki 只提供维护建议，不直接进入索引。
+3. 单个文件失败记录错误，下一轮继续重试。
+4. 删除或移出正式目录的文件会删除对应 documents、chunks 和向量。
+5. 同步状态保存在 `logs/llm-wiki-sync-status.json`。
+6. 详细维护流程参见 `docs/obsidian-vault-maintenance-guide.md`。
 ## 10. 质量检查
 
 每日同步前执行只读检查，不自动修改文件。
@@ -618,143 +595,127 @@ RAG 服务根据 reranker 分数判断是否可回答。
 
 第一版可选实现。
 
-## 14. Hermes llm-wiki Profile 设计
+## 14. Hermes 领域入口设计
 
-### 14.1 Profile 目标
+### 14.1 当前主链路
 
-`llm-wiki` profile 只服务内部业务内部产品知识问答，不影响日常 Hermes 使用。
-
-### 14.2 工具边界
-
-启用：
+当前 `/wiki` 不依赖模型工具选择，使用生成式 hook 直接调用：
 
 ```text
-mcp-obsidian-rag
+POST /rag/domains/default/answer
 ```
 
-禁用：
+Hook 只发送 `query`，API 从注册表固定解析 domain 和 profile。请求体不能覆盖它们。
 
-```text
-web
-browser
-terminal
-file write
-long-term memory
-```
+### 14.2 入口边界
 
-### 14.3 系统提示核心规则
+1. 每个领域有唯一入口、aliases 和 hook 名。
+2. 普通聊天不触发 Wiki。
+3. 不做模型自动领域路由。
+4. 不跨领域回退。
+5. Hook 校验响应领域和隔离标记。
+6. Hook 不写 Vault，不写长期 memory。
+7. MCP 只作为可选 agent 集成，不是当前 QQBot 主链路。
 
-```text
-你是内部业务内部产品知识助手。
+### 14.3 生成与应用
 
-所有正式知识、业务咨询、FAQ 类问题必须调用 Obsidian RAG MCP。
-只能基于 MCP 返回的 chunks 回答。
-如果 answerable=false、citations 为空、或来源不足，不能回答问题本身。
-回答必须包含来源路径和标题。
-不要使用模型常识补充产品事实。
-不要写入 Obsidian。
-不要使用 web/browser/terminal/file write/长期 memory。
-默认输出内部答案，不生成客户可直接发送话术。
-```
+`bin/sync_hermes_domain_hooks.py` 从 `config/domains.yml` 生成 hooks。Admin Web 可校验、保存领域配置并应用入口；hook 变化后由管理员显式重启 Hermes。
+
+详细步骤参见 `docs/hermes-integration-guide.md`。
 
 ### 14.4 回答格式
 
-建议格式：
+最终答案栏目、来源数量、检索候选数和阈值由领域 profile 决定。当前 product profile 输出：
 
 ```text
-结论：
-- ...
-
-依据：
-- ...
-
-Wiki 未覆盖：
-- ...
-
-来源：
-- 10_Knowledge/Products/产品A/SSO支持情况.md > 支持范围
+结论
+适用场景
+注意事项
+可替代方案
+来源
 ```
 
-需要区分：
-
-1. 明确支持。
-2. 明确不支持。
-3. Wiki 未覆盖。
-
-第一版暂不专门维护“不支持/限制边界”页面，因此没有明确来源时应归入“Wiki 未覆盖”，不能推断为“不支持”。
-
+没有可靠正式来源时拒绝回答，不提供模型通用建议入口。
 ## 15. Docker 部署设计
 
-第一版服务：
+当前项目根 Compose 管理：
+
+| 服务 | 容器 | 作用 |
+| --- | --- | --- |
+| RAG API | `llm-wiki-rag-api` | REST、索引、检索与答案 |
+| MCP Bridge | `llm-wiki-mcp-bridge` | 可选 MCP 接入 |
+| Admin Web | `llm-wiki-admin-web` | 管理控制台 |
+| Sync Runner | `llm-wiki-sync-runner` | 每日 Git Pull + 增量索引 |
+| Milvus | `llm-wiki-milvus` | 主向量检索 |
+| etcd | `llm-wiki-milvus-etcd` | Milvus 元数据 |
+| MinIO | `llm-wiki-milvus-minio` | Milvus 对象存储 |
+
+Postgres 使用 `postgress/docker-compose.yml` 独立运行。LiteLLM 和 Hermes 为外部已有服务。
+
+当前端口：
 
 ```text
-hermes
-litellm
-obsidian-rag-mcp
-postgres
+Admin Web: 0.0.0.0:18090
+RAG REST:  0.0.0.0:18080
+MCP Bridge: 127.0.0.1:18081
+Milvus:     127.0.0.1:19530
+Postgres:   0.0.0.0:25432
+LiteLLM:    127.0.0.1:14000
 ```
 
-示例 Compose 结构：
+部署原则：
 
-```yaml
-services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_DB: rag
-      POSTGRES_USER: rag
-      POSTGRES_PASSWORD: rag
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+1. 开发代码保留在宿主项目目录，镜像通过 Docker build 复制代码。
+2. Vault、config、logs 和必要运行配置通过 bind mount 提供。
+3. RAG 与 MCP 对 Vault 只读。
+4. Admin 不挂载 Docker socket。
+5. Admin 只能写领域配置和受管 Hermes hooks；重启 Hermes 由管理员确认执行。
+6. Postgres 与 Milvus 数据卷必须持久化。
+7. 完整启动与恢复步骤参见 `operations-restart-runbook.md`。
+## 16. Admin Web 与管理 API
 
-  obsidian-rag-mcp:
-    build: ./services/obsidian-rag-mcp
-    depends_on:
-      - postgres
-    environment:
-      VAULT_PATH: /vault
-      DATABASE_URL: postgresql://rag:rag@postgres:5432/rag
-      LITELLM_BASE_URL: http://litellm:4000
-      EMBEDDING_MODEL: your-embedding-model
-      RERANKER_URL: http://reranker:8000/rerank
-    volumes:
-      - /path/to/obsidian-vault:/vault:ro
-    ports:
-      - "8080:8080"
-
-volumes:
-  postgres_data:
-```
-
-注意：
-
-1. Obsidian Vault 必须只读挂载。
-2. Postgres 数据需要持久化。
-3. Hermes 通过 MCP HTTP endpoint 连接 `obsidian-rag-mcp`。
-4. LiteLLM 可复用你现有部署。
-
-## 16. 管理 API
-
-第一版不做管理 UI，只保留 HTTP API。
-
-建议接口：
+Admin Web 当前地址：
 
 ```text
-GET /health
-GET /admin/sync/latest
-POST /admin/sync/run
-GET /admin/quality/latest
-GET /admin/gaps?status=open
+http://192.168.121.20:18090
 ```
 
-用途：
+当前页面：
 
-1. 健康检查。
-2. 手动触发同步。
-3. 查看最近同步状态。
-4. 查看质量报告。
-5. 查看知识缺口。
+1. 仪表盘与健康检查。
+2. 模型配置。
+3. 领域管理。
+4. 同步管理。
+5. 知识地图。
+6. 文档浏览。
+7. 文档入库与 PDF 文本提取。
+8. Schema 模板。
+9. RAG 测试。
+10. 知识缺口与审计日志。
+11. obsidian-wiki 状态。
 
+关键 API：
+
+```text
+GET  /health
+GET  /api/health-detail
+GET  /api/domains
+POST /api/domains/validate
+PUT  /api/domains/{domain_id}
+POST /api/domain-hooks/apply
+POST /api/full-sync
+POST /api/rag-test
+POST /api/rewrite-document
+POST /api/extract-pdf
+GET  /api/wiki-health
+```
+
+管理边界：
+
+1. 领域保存采用原子替换，并生成 `config/domains.yml.bak`。
+2. Profiles 当前只读。
+3. Hook 应用不自动重启 Hermes。
+4. 当前为单管理员模式；扩大网络范围前应增加认证。
 ## 17. 测试与评测
 
 第一版预留评测机制，测试集由用户后续提供。
@@ -790,29 +751,35 @@ scripts/run_eval.py
 
 安全原则：
 
-1. Obsidian Vault 只读挂载。
-2. Hermes 不启用写文件工具。
-3. `llm-wiki` 不启用 web/browser/terminal。
-4. `llm-wiki` 关闭长期 memory。
-5. 知识类回答必须有 RAG 来源。
-6. 无来源不回答。
-7. 系统侧记录长期保存，第一版不自动清理。
+1. 正式知识只来自人工维护的 Obsidian Markdown。
+2. RAG API 与 MCP Bridge 对 Vault 只读。
+3. Hermes hook 不启用文件写入、终端、web 或长期 memory。
+4. 固定领域 API 禁止请求体覆盖 domain/profile。
+5. 不做模型自动领域路由。
+6. 所有正式答案必须有来源；无来源拒答。
+7. Admin 不挂载 Docker socket。
+8. LiteLLM API key 不写入文档、hook 或截图。
+9. 领域配置写入前校验路径重叠、入口冲突和 hook 冲突。
+10. 当前 Admin 为单管理员模式，复杂 RBAC 尚未实现。
 
 第一版暂不做：
 
 1. 企业微信发送前硬门控。
-2. 复杂 ACL。
-3. 多部门隔离。
+2. 复杂 ACL 和部门权限映射。
+3. 自动清理知识缺口和审计记录。
+4. 客户话术生成入口。
 
-但数据模型保留未来扩展空间：
+数据模型保留未来扩展：
 
 ```yaml
 visibility: internal
 owner: nick
-allowed_groups: [internal]
+allowed_groups:
+  - internal
 ```
+## 19. 实施状态与剩余工作
 
-## 19. 实施计划
+以下阶段记录第一版建设过程。基础服务、同步、Milvus 检索、reranker、固定领域 Hermes hook、Admin Web 和 Docker Compose 已经部署；正式回归测试集与企业微信接入仍未完成。
 
 ### 阶段 1：基础服务
 
@@ -879,40 +846,39 @@ allowed_groups: [internal]
 3. Wiki 未覆盖问题不回答。
 4. FAQ/场景页能扩展到产品事实页。
 
-## 20. 验收标准
+## 20. 当前验收标准
 
-第一版验收通过条件：
+当前基础版本验收条件：
 
-1. Docker 环境能启动 `postgres`、`obsidian-rag-mcp`、Hermes 相关服务。
-2. Obsidian Vault 以只读方式挂载。
-3. 手动触发同步成功。
-4. 每日自动同步任务可运行。
-5. Markdown 修改后，下一次同步能更新索引。
-6. Hermes 能通过 MCP 查询 RAG。
-7. 有来源的问题能返回答案和引用。
-8. 无来源的问题不回答，并写入知识缺口。
-9. Hermes 不使用 web/browser/terminal/file write/长期 memory。
-10. 第一版不生成客户话术，只输出内部答案。
-11. `obsidian-wiki` 可作为离线维护工具运行并输出建议。
-12. `obsidian-wiki` 不参与实时问答链路，不绕过 RAG 来源约束。
-
+1. Postgres、Milvus、RAG、MCP、Admin 和 sync-runner 容器可恢复启动。
+2. Admin 健康检查全部通过。
+3. Vault Git 更新后可以自动或手动增量索引。
+4. 新增、修改和删除 Markdown 能正确更新 Postgres 与 Milvus。
+5. 领域路径和 frontmatter domain 一致。
+6. 固定领域 API 禁止 domain/profile 覆盖。
+7. Hermes 领域 hook 只响应显式触发词。
+8. 普通聊天不触发 Wiki。
+9. 有来源的问题返回答案和 citations。
+10. 无来源的问题拒答并记录系统侧知识缺口。
+11. Admin 可校验和原子保存领域配置。
+12. obsidian-wiki 不进入实时问答链路，不自动写正式知识。
+13. 软件设计、恢复、知识维护和 Hermes 接入文档与运行实现一致。
 ## 21. 后续演进
 
-第二版可考虑：
+后续按优先级考虑：
 
-1. 企业微信正式接入。
-2. 客户话术按钮。
-3. `customer_safe: true` 内容过滤。
-4. 管理 UI。
-5. 正式测试集评测。
-6. 权限模型。
+1. 建立正式 RAG 回归测试集和自动评测。
+2. 企业微信 adapter 与真实用户入口。
+3. “生成客户话术”独立按钮和 `customer_safe` 过滤。
+4. Admin basic/token 认证。
+5. 多领域权限和部门映射。
+6. 按领域拆分 Milvus collection 或数据库 schema。
 7. 发送前硬门控。
-8. Qdrant/OpenSearch 拆分。
-9. 更强 reranker。
+8. 更完整的 VectorStore adapter。
+9. 更强 reranker 或领域专用 profile。
 10. 知识缺口审核流。
-11. 将 `obsidian-wiki` 的维护建议接入管理 UI。
-12. 对 `obsidian-wiki` 写入类操作增加人工审批流。
-
+11. obsidian-wiki 维护建议的人工审批工作流。
+12. 知识图谱可视化的关系治理和降噪。
 ## 22. 多领域普适性设计边界
 
 当前系统第一版仍然以内部业务产品知识库为落地场景，但架构目标不是只服务业务场景。后续可以扩展到 HR 制度库、运维手册库、法务知识库、研发知识库等正式知识库场景。
@@ -1514,3 +1480,12 @@ POST /api/extract-pdf
 ```
 
 接口返回 `extracted_markdown`、页数、字符数和 warnings。若抽取文本过少，提示可能是扫描件，仍不进入自动正式知识链路。
+
+
+
+## 24. 配套运维与接入文档
+
+1. 服务启动、恢复和故障处理：`operations-restart-runbook.md`。
+2. Obsidian Vault 新增、修改、删除、Git 同步和索引验证：`docs/obsidian-vault-maintenance-guide.md`。
+3. Hermes 单领域与多领域 hook 接入：`docs/hermes-integration-guide.md`。
+4. Frontmatter 字段规范：`docs/wiki-frontmatter-schema.md`。

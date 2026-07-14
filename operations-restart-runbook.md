@@ -1,6 +1,6 @@
 # LLM Wiki + Hermes 恢复操作手册
 
-更新时间：2026-07-13
+更新时间：2026-07-14
 
 本文档用于服务器重启、Docker 服务异常退出、手动升级镜像、或需要恢复整套 LLM Wiki + Hermes 服务时使用。
 
@@ -400,9 +400,13 @@ hook(s) loaded
 Gateway running
 ```
 
+完整的单领域、多领域接入、hook 生成和故障排查参见 `docs/hermes-integration-guide.md`。
+
 ## 4. 知识更新流程
 
 本地 Obsidian 修改 Markdown 后：
+
+> 只执行 Git 更新不会自动更新已存在的检索索引。服务器拉取最新 Vault 后，还必须执行 RAG 同步；每日任务或下面的手动操作会完成这一步。
 
 ```bash
 git add .
@@ -432,6 +436,8 @@ Git Pull + 重新索引
 cat /root/llm_wiki_hermes/logs/llm-wiki-sync-status.json
 curl --noproxy "*" http://127.0.0.1:18090/api/sync-status
 ```
+
+文档目录、frontmatter、增删改、归档和同步验收的完整规则参见 `docs/obsidian-vault-maintenance-guide.md`。
 
 查看同步容器日志：
 
@@ -749,6 +755,8 @@ docker compose build rag-api admin-web
 | `/root/.hermes/hooks/<hermes_hook>` | 各领域生成的 Hermes 固定入口 hook |
 | `/root/.hermes/logs/gateway.log` | Hermes 网关日志 |
 | `/root/llm_wiki_hermes/docs/wiki-frontmatter-schema.md` | Wiki frontmatter 规范 |
+| `/root/llm_wiki_hermes/docs/obsidian-vault-maintenance-guide.md` | Obsidian Vault 更新维护手册 |
+| `/root/llm_wiki_hermes/docs/hermes-integration-guide.md` | Hermes 单领域与多领域接入手册 |
 
 ## 8. 备份和回滚
 
