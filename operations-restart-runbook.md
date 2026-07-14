@@ -159,7 +159,7 @@ curl --noproxy "*" http://127.0.0.1:14000/v1/models \
 
 应包含：
 
-- `Qwen3.6-27B-FP8`
+- `Qwen3.6-35B-A3B-FP8`
 - `Qwen3-Embedding-4B`
 - `Qwen3-Reranker-0.6B`
 

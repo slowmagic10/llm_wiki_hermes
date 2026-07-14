@@ -29,7 +29,7 @@ def read_model_settings() -> dict[str, Any]:
 
 def model_defaults() -> dict[str, str]:
     return {
-        "chat_model": os.getenv("CHAT_MODEL", "Qwen3.6-27B-FP8"),
+        "chat_model": os.getenv("CHAT_MODEL", "Qwen3.6-35B-A3B-FP8"),
         "embedding_model": os.getenv("EMBEDDING_MODEL", "Qwen3-Embedding-4B"),
         "reranker_model": os.getenv("RERANKER_MODEL", "Qwen3-Reranker-0.6B"),
     }
