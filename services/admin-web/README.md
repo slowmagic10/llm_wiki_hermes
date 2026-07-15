@@ -1,32 +1,38 @@
-# LLM Wiki Admin Web
+# Knowledge Hub Admin
 
-Internal management UI for the LLM Wiki RAG stack.
+企业知识库管理控制台。前端和管理 API 分层开发，生产环境仍通过同一个 FastAPI 容器和 `18090` 端口发布。
 
-Features:
+## 目录结构
 
-- Service and index status dashboard
-- Git pull / RAG sync controls
-- RAG answer testing with citations and scores
-- Read-only Markdown vault browser
-- Knowledge gaps and audit log views
-- obsidian-wiki installation/status detection
+- `frontend/`：Vue 3 + TypeScript + Vite 前端。
+- `main.py`：FastAPI 初始化和管理 API 路由。
+- `config.py`：路径、服务地址和环境配置。
+- `*_service.py`：状态、同步、文档、RAG、领域、健康检查等后端服务。
+- `web/`：旧版原生前端，仅保留为历史参考，不进入生产镜像。
+- `web-vue/`：历史构建目录，不再使用。
+- 生产静态文件由 Docker 多阶段构建写入镜像内的 `/app/web`。
 
-Structure:
+## 前端开发
 
-- `main.py`: FastAPI app initialization and route registration.
-- `config.py`: environment-derived paths, URLs, and constants.
-- `db.py`: Postgres connection and query helpers.
-- `shell.py`: subprocess command helper.
-- `*_service.py`: feature-specific backend logic for status, sync, files, RAG, domains, health, knowledge map, etc.
-- `web/index.html`: Admin page markup.
-- `web/static/admin.css`: UI styles.
-- `web/static/admin.js`: browser-side behavior.
-
-Run locally on the server:
+宿主机 Node 版本较旧时，优先使用 Docker 完整构建。需要本地调试时要求 Node.js 22：
 
 ```bash
-cd /root/llm_wiki_hermes/services/admin-web
-/root/llm_wiki_hermes/.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 18090
+cd /root/llm_wiki_hermes/services/admin-web/frontend
+npm ci
+npm run dev -- --host 0.0.0.0
 ```
 
-The UI is read-only for Markdown content. Knowledge updates still happen through Git-managed Markdown files.
+Vite 开发服务器使用 `5173`，并将 `/api` 和 `/health` 代理到 `127.0.0.1:18090`。
+
+## 生产构建
+
+```bash
+cd /root/llm_wiki_hermes
+docker compose build admin-web
+docker compose up -d --no-deps --force-recreate admin-web
+curl --noproxy "*" http://127.0.0.1:18090/health
+```
+
+Dockerfile 的第一阶段使用 Node 22 执行 `npm ci`、`vue-tsc` 和 `vite build`；最终镜像只包含 Python、FastAPI 和构建后的静态文件。
+
+Markdown 正式知识仍由独立 Vault Git 仓库人工维护，管理页面不会自动把草稿写入正式 Vault。

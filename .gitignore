@@ -24,3 +24,8 @@ backups/runtime/
 *.bak
 *.bak-*
 bin/backup_runtime.sh
+
+# admin frontend build artifacts
+services/admin-web/frontend/node_modules/
+services/admin-web/frontend/dist/
+services/admin-web/frontend/*.tsbuildinfo

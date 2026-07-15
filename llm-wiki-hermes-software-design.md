@@ -1489,3 +1489,16 @@ POST /api/extract-pdf
 2. Obsidian Vault 新增、修改、删除、Git 同步和索引验证：`docs/obsidian-vault-maintenance-guide.md`。
 3. Hermes 单领域与多领域 hook 接入：`docs/hermes-integration-guide.md`。
 4. Frontmatter 字段规范：`docs/wiki-frontmatter-schema.md`。
+
+### 24.1 管理前端实现
+
+管理端采用前后端分层但保持单端口部署：
+
+- 前端：Vue 3、TypeScript、Vite、Lucide Vue。
+- 前端源码：`services/admin-web/frontend`。
+- 后端：现有 FastAPI 管理 API，继续负责领域、模型、同步、文档和问答操作。
+- 生产构建：Admin Dockerfile 使用 Node 22 多阶段构建，最终镜像只保留 Python 运行时与 `dist` 静态产物。
+- 发布方式：FastAPI 在 `/assets` 提供前端资源，在同源 `/api/*` 提供管理 API，避免额外反向代理和跨域配置。
+- 路由方式：前端使用 Hash 路由状态，刷新页面不会绕过 FastAPI 首页。
+
+当前不引入 Node.js 业务后端。后续只有在用户、权限、任务编排等管理逻辑明显增长时，才考虑增加 NestJS BFF；RAG、解析、Embedding、Rerank 和 Milvus 链路继续由 Python 服务负责。

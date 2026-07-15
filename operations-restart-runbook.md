@@ -846,3 +846,43 @@ cat /root/llm_wiki_hermes/logs/llm-wiki-sync-status.json
 ```text
 /wiki FTLC4353RHPL对应我司哪个型号，使用场景是什么？
 ```
+
+## 附录：Vue 管理端构建与单独恢复
+
+管理前端源码位于：
+
+```text
+/root/llm_wiki_hermes/services/admin-web/frontend
+```
+
+技术栈为 Vue 3 + TypeScript + Vite。生产环境不在宿主机直接运行 Node 服务；Node 22 只用于 Docker 多阶段构建，最终仍由 FastAPI 在 `18090` 端口提供页面和 API。
+
+仅更新或恢复管理端：
+
+```bash
+cd /root/llm_wiki_hermes
+docker pull node:22-alpine
+docker compose build admin-web
+docker compose up -d --no-deps --force-recreate admin-web
+docker compose ps admin-web
+curl --noproxy "*" http://127.0.0.1:18090/health
+curl --noproxy "*" http://127.0.0.1:18090/api/status
+```
+
+前端依赖和类型检查都在镜像构建阶段通过 `npm ci`、`vue-tsc` 和 `vite build` 完成。不要把 `frontend/node_modules` 提交到 Git 或复制进镜像上下文。
+
+如构建停在 Node 镜像元数据：
+
+```bash
+docker pull node:22-alpine
+docker compose build admin-web
+```
+
+如果容器反复重启：
+
+```bash
+docker logs --tail 120 llm-wiki-admin-web
+docker inspect llm-wiki-admin-web --format 'status={{.State.Status}} exit={{.State.ExitCode}} restarts={{.RestartCount}}'
+```
+
+正常首页应包含 `/assets/index-*.js` 和 `/assets/index-*.css`，不再依赖旧的 `/static/admin.js`。

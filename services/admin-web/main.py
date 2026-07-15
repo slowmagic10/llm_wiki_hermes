@@ -39,8 +39,9 @@ from sync_service import sync_index as run_sync_index
 from sync_service import sync_status as get_sync_status
 from wiki_health_service import wiki_health as get_wiki_health
 
-app = FastAPI(title="LLM Wiki Admin", version="0.1.0")
-app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
+app = FastAPI(title="Knowledge Hub Admin", version="0.2.0")
+if (WEB_DIR / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=str(WEB_DIR / "assets")), name="assets")
 
 
 class QueryRequest(BaseModel):
