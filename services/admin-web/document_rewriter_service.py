@@ -10,6 +10,13 @@ import yaml
 from fastapi import HTTPException
 
 from config import LITELLM_BASE_URL
+from document_schema_service import (
+    enforce_template,
+    fallback_draft,
+    resolve_template,
+    system_prompt as schema_system_prompt,
+    user_prompt as schema_user_prompt,
+)
 from model_settings import effective_model_settings, litellm_headers
 from utils import jsonable
 
@@ -27,6 +34,12 @@ NOISE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("document_tracking_code", re.compile(r"\b\d{6,}\b.*\d{4}\s*年\s*\d{1,2}\s*月")),
 )
 
+UNIVERSAL_NOISE_REASONS = {
+    "pdf_page_header_footer",
+    "standalone_page_marker",
+    "call_to_action",
+    "document_tracking_code",
+}
 
 def _extract_json(text: str) -> dict[str, Any]:
     candidate = text.strip()
@@ -88,7 +101,7 @@ def _validate_markdown(markdown: str) -> dict[str, Any]:
     }
 
 
-def _clean_source_markdown(raw_markdown: str) -> tuple[str, list[str]]:
+def _clean_source_markdown(raw_markdown: str, template_id: str = "product") -> tuple[str, list[str]]:
     removed: list[str] = []
     cleaned_lines: list[str] = []
     previous_blank = False
@@ -115,6 +128,8 @@ def _clean_source_markdown(raw_markdown: str) -> tuple[str, list[str]]:
 
         matched_reason = None
         for reason, pattern in NOISE_PATTERNS:
+            if template_id != "product" and reason not in UNIVERSAL_NOISE_REASONS:
+                continue
             if pattern.search(line):
                 matched_reason = reason
                 break
@@ -336,6 +351,44 @@ A: 待确认：原始文档未提供明确依据。
     )
 
 
+def _schema_fallback_result(
+    raw_markdown: str,
+    domain: str,
+    template: dict[str, str],
+    owner: str,
+    reason: str,
+    removed_items: list[str],
+) -> dict[str, Any]:
+    markdown, report = fallback_draft(
+        raw_markdown=raw_markdown,
+        domain=domain,
+        template=template,
+        owner=owner,
+        reason=reason,
+        removed_items=removed_items,
+    )
+    return jsonable(
+        {
+            "rewritten_markdown": markdown,
+            "review_report": report,
+            "validation": _validate_markdown(markdown),
+            "model": "fallback-template",
+            "usage": {},
+            "selected_schema": {
+                "id": template["id"],
+                "label": template["label"],
+                "type": template["type"],
+            },
+            "notes": {
+                "write_policy": "preview_only_no_vault_write",
+                "fallback": True,
+                "fallback_reason": reason,
+                "next_step": "人工确认后再保存到 20_Drafts；转正式前手动改 status=active, rag=true。",
+            },
+        }
+    )
+
+
 def _user_prompt(
     raw_markdown: str,
     domain: str,
@@ -369,25 +422,26 @@ def _user_prompt(
 """
 
 
-async def rewrite_document(raw_markdown: str, domain: str, profile: str, doc_type: str, owner: str) -> dict[str, Any]:
+async def rewrite_document(raw_markdown: str, domain: str, template_id: str, owner: str) -> dict[str, Any]:
     raw_markdown = raw_markdown.strip()
     if len(raw_markdown) < 20:
         raise HTTPException(status_code=400, detail="raw_markdown is too short")
     if len(raw_markdown) > 60000:
         raise HTTPException(status_code=400, detail="raw_markdown is too long")
-    cleaned_markdown, removed_items = _clean_source_markdown(raw_markdown)
+    template = resolve_template(template_id)
+    cleaned_markdown, removed_items = _clean_source_markdown(raw_markdown, template["id"])
 
     settings = effective_model_settings()
     model = settings["chat_model"]
     body = {
         "model": model,
         "messages": [
-            {"role": "system", "content": _system_prompt()},
-            {"role": "user", "content": _user_prompt(cleaned_markdown, domain, profile, doc_type, owner, removed_items)},
+            {"role": "system", "content": schema_system_prompt(template)},
+            {"role": "user", "content": schema_user_prompt(cleaned_markdown, domain, template, owner, removed_items)},
         ],
         "temperature": 0.1,
         "top_p": 0.8,
-        "max_tokens": 1200,
+        "max_tokens": 2200,
     }
     try:
         async with httpx.AsyncClient(timeout=45, trust_env=False) as client:
@@ -397,13 +451,15 @@ async def rewrite_document(raw_markdown: str, domain: str, profile: str, doc_typ
                 json=body,
             )
     except Exception as exc:
-        return _fallback_result(cleaned_markdown, domain, doc_type, owner, f"LiteLLM request failed: {exc}", removed_items)
+        return _schema_fallback_result(
+            cleaned_markdown, domain, template, owner, f"LiteLLM request failed: {exc}", removed_items
+        )
     if response.status_code >= 400:
         if response.status_code >= 500:
-            return _fallback_result(
+            return _schema_fallback_result(
                 cleaned_markdown,
                 domain,
-                doc_type,
+                template,
                 owner,
                 f"LiteLLM returned {response.status_code}: {response.text[:300]}",
                 removed_items,
@@ -415,12 +471,13 @@ async def rewrite_document(raw_markdown: str, domain: str, profile: str, doc_typ
     try:
         result = _extract_json(content)
     except HTTPException as exc:
-        return _fallback_result(cleaned_markdown, domain, doc_type, owner, str(exc.detail), removed_items)
+        return _schema_fallback_result(cleaned_markdown, domain, template, owner, str(exc.detail), removed_items)
     rewritten = str(result.get("rewritten_markdown") or "").strip()
     report = result.get("review_report") if isinstance(result.get("review_report"), dict) else {}
-    validation = _validate_markdown(rewritten)
     if not rewritten:
         raise HTTPException(status_code=502, detail="model returned empty rewritten_markdown")
+    rewritten = enforce_template(rewritten, template, domain, owner)
+    validation = _validate_markdown(rewritten)
     report.setdefault("ready_for_active", False)
     report["ready_for_active"] = False
     report.setdefault("removed_irrelevant_content", removed_items)
@@ -431,6 +488,11 @@ async def rewrite_document(raw_markdown: str, domain: str, profile: str, doc_typ
             "validation": validation,
             "model": model,
             "usage": payload.get("usage") or {},
+            "selected_schema": {
+                "id": template["id"],
+                "label": template["label"],
+                "type": template["type"],
+            },
             "notes": {
                 "write_policy": "preview_only_no_vault_write",
                 "next_step": "人工确认后再保存到 20_Drafts；转正式前手动改 status=active, rag=true。",

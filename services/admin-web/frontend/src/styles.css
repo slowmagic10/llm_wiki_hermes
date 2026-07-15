@@ -225,6 +225,12 @@ tr:last-child td { border-bottom: 0; }
 .upload-button { min-height: 42px; margin: 0 16px 12px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px dashed #9baec5; border-radius: 5px; background: #f5f8fc; color: #48627f; font-size: 10px; font-weight: 700; cursor: pointer; }
 .upload-button input { display: none; }
 .source-editor { width: calc(100% - 32px); min-height: 360px; margin: 0 16px 16px; padding: 14px; border: 1px solid var(--line-strong); border-radius: 5px; color: #314054; font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; line-height: 1.65; resize: vertical; }
+.template-context { margin: 0 16px 14px; padding: 12px 14px; border-left: 3px solid var(--accent); background: #f6f8fc; }
+.template-context > div { display: flex; align-items: center; gap: 8px; }
+.template-context strong { color: #253247; font-size: 11px; }
+.template-context code { padding: 2px 5px; border-radius: 3px; background: #e8edf5; color: #68758a; font-size: 8px; }
+.template-context p { margin: 6px 0 2px; color: #4f5d70; font-size: 10px; }
+.template-context > span { color: #7b8798; font-size: 9px; }
 .report-grid { padding: 14px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
 .review-blocks { padding: 7px 16px; }
 .review-blocks > div { padding: 10px 0; border-bottom: 1px solid #edf0f4; }

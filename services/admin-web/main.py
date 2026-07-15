@@ -80,8 +80,9 @@ class DomainConfigRequest(BaseModel):
 class RewriteDocumentRequest(BaseModel):
     raw_markdown: str
     domain: str = "default"
-    profile: str = "product"
-    doc_type: str = "product_note"
+    schema_id: str = ""
+    profile: str = ""
+    doc_type: str = ""
     owner: str = "nick"
 
 
@@ -219,11 +220,21 @@ async def rag_test(request: QueryRequest) -> dict[str, Any]:
 
 @app.post("/api/rewrite-document")
 async def rewrite_document_api(request: RewriteDocumentRequest) -> dict[str, Any]:
+    legacy_schema_by_type = {
+        "policy": "enterprise_handbook",
+        "runbook": "sop",
+        "product_note": "product",
+        "product_spec": "product",
+        "product_faq": "product",
+        "compatibility_note": "product",
+        "solution_note": "product",
+    }
+    template_id = request.schema_id.strip() or legacy_schema_by_type.get(request.doc_type.strip())
+    template_id = template_id or ("product" if request.profile.strip() == "product" else "general")
     return await rewrite_document(
         raw_markdown=request.raw_markdown,
         domain=request.domain.strip() or "default",
-        profile=request.profile.strip() or "product",
-        doc_type=request.doc_type.strip() or "product_note",
+        template_id=template_id,
         owner=request.owner.strip() or "nick",
     )
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Clipboard, Download, FileUp, Sparkles, Trash2 } from '@lucide/vue'
 import { api, errorMessage } from '../api'
 import JsonDetails from '../components/JsonDetails.vue'
@@ -8,13 +8,14 @@ import StatusBadge from '../components/StatusBadge.vue'
 
 const raw = ref('')
 const domain = ref('default')
-const profile = ref('product')
-const docType = ref('product_note')
+const schemaId = ref('general')
 const owner = ref('nick')
+const templates = ref<any[]>([])
 const pdf = ref<any>(null)
 const result = ref<any>(null)
 const busy = ref('')
 const error = ref('')
+const selectedTemplate = computed(() => templates.value.find((item: any) => item.id === schemaId.value))
 
 async function extract(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]
@@ -26,9 +27,18 @@ async function extract(event: Event) {
 async function rewrite() {
   if (!raw.value.trim()) return
   busy.value = 'rewrite'; error.value = ''; result.value = null
-  try { result.value = await api.post('/api/rewrite-document', { raw_markdown: raw.value, domain: domain.value, profile: profile.value, doc_type: docType.value, owner: owner.value }) }
+  try { result.value = await api.post('/api/rewrite-document', { raw_markdown: raw.value, domain: domain.value, schema_id: schemaId.value, owner: owner.value }) }
   catch (e) { error.value = errorMessage(e) } finally { busy.value = '' }
 }
+async function loadTemplates() {
+  try {
+    const data = await api.get('/api/schema-template')
+    templates.value = data.templates || []
+    schemaId.value = data.default_template || templates.value[0]?.id || 'general'
+  } catch (e) { error.value = errorMessage(e) }
+}
+onMounted(loadTemplates)
+watch(schemaId, () => { result.value = null })
 async function copy() { if (result.value?.rewritten_markdown) await navigator.clipboard.writeText(result.value.rewritten_markdown) }
 function download() {
   const markdown = result.value?.rewritten_markdown
@@ -52,12 +62,22 @@ function clear() { raw.value = ''; pdf.value = null; result.value = null; error.
           <div class="panel__head"><div><strong>原始内容</strong><span>不会自动写入 Vault</span></div></div>
           <div class="form-grid">
             <label class="field"><span>Domain</span><input v-model="domain" /></label>
-            <label class="field"><span>Profile</span><input v-model="profile" /></label>
-            <label class="field"><span>文档类型</span><select v-model="docType"><option>product_note</option><option>product_spec</option><option>product_faq</option><option>compatibility_note</option><option>solution_note</option><option>knowledge_note</option></select></label>
+            <label class="field">
+              <span>Schema 模板</span>
+              <select v-model="schemaId">
+                <option v-for="item in templates" :key="item.id" :value="item.id">{{ item.label }} · {{ item.type }}</option>
+              </select>
+            </label>
+            <label class="field"><span>Frontmatter type</span><input :value="selectedTemplate?.type || '-'" readonly /></label>
             <label class="field"><span>Owner</span><input v-model="owner" /></label>
           </div>
+          <div v-if="selectedTemplate" class="template-context">
+            <div><strong>{{ selectedTemplate.label }}</strong><code>{{ selectedTemplate.id }}</code></div>
+            <p>{{ selectedTemplate.description }}</p>
+            <span>生成时会强制使用 type={{ selectedTemplate.type }} 及该模板的正文结构。</span>
+          </div>
           <label class="upload-button"><FileUp :size="17" /><span>{{ busy === 'pdf' ? '正在抽取 PDF...' : '选择文本型 PDF' }}</span><input type="file" accept=".pdf,application/pdf" @change="extract" /></label>
-          <textarea v-model="raw" class="source-editor" placeholder="粘贴原始 Markdown、规格片段、兼容说明或来源备注。信息不完整也可以。"></textarea>
+          <textarea v-model="raw" class="source-editor" placeholder="粘贴原始 Markdown、制度条款、技术资料、流程记录或其他来源内容。信息不完整也可以。"></textarea>
         </section>
         <section class="panel">
           <div class="panel__head"><div><strong>PDF 抽取报告</strong><span>不执行 OCR</span></div><StatusBadge v-if="pdf" :status="pdf.can_rewrite" :label="pdf.can_rewrite ? '可重写' : '需检查'" /></div>
@@ -65,7 +85,7 @@ function clear() { raw.value = ''; pdf.value = null; result.value = null; error.
           <div v-else class="empty-state">选择 PDF 后显示抽取质量。</div>
         </section>
         <section class="panel">
-          <div class="panel__head"><div><strong>审核报告</strong><span>发布前必须人工确认</span></div><StatusBadge v-if="result" :status="result.validation?.ok ? 'ok' : 'warning'" :label="result.validation?.ok ? '草稿通过' : '需要确认'" /></div>
+          <div class="panel__head"><div><strong>审核报告</strong><span>{{ result?.selected_schema?.label || selectedTemplate?.label || '所选模板' }} · 发布前必须人工确认</span></div><StatusBadge v-if="result" :status="result.validation?.ok ? 'ok' : 'warning'" :label="result.validation?.ok ? '草稿通过' : '需要确认'" /></div>
           <div v-if="result" class="review-blocks">
             <div><span>建议路径</span><strong>{{ result.review_report?.suggested_path || '-' }}</strong></div>
             <div><span>缺失字段</span><p>{{ (result.review_report?.missing_fields || result.validation?.missing_required_fields || []).join('、') || '无' }}</p></div>

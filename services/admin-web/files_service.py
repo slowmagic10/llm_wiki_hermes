@@ -77,7 +77,7 @@ def file_preview(path: str) -> dict[str, str]:
     return {"path": target.relative_to(VAULT_PATH).as_posix(), "content": content[:100000]}
 
 
-def schema_template() -> dict[str, Any]:
+def _schema_templates() -> list[dict[str, str]]:
     templates: list[dict[str, str]] = []
     for spec in SCHEMA_TEMPLATE_SPECS:
         path = SCHEMA_TEMPLATE_DIR / spec["filename"]
@@ -93,6 +93,19 @@ def schema_template() -> dict[str, Any]:
                 "content": path.read_text(encoding="utf-8", errors="replace"),
             }
         )
+    return templates
+
+
+def schema_template_by_id(template_id: str) -> dict[str, str]:
+    normalized_id = template_id.strip() or "general"
+    for template in _schema_templates():
+        if template["id"] == normalized_id:
+            return template
+    raise HTTPException(status_code=400, detail=f"unknown schema template: {normalized_id}")
+
+
+def schema_template() -> dict[str, Any]:
+    templates = _schema_templates()
 
     default_template = "general"
     default_content = next(
