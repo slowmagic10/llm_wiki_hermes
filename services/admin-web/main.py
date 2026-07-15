@@ -264,7 +264,7 @@ async def health_detail() -> dict[str, Any]:
 
 
 @app.get("/api/schema-template")
-def schema_template() -> dict[str, str]:
+def schema_template() -> dict[str, Any]:
     return get_schema_template()
 
 
