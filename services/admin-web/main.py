@@ -2,12 +2,27 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Query, Request, Response, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
-from config import INDEX_HTML, MODEL_SETTINGS_PATH, WEB_DIR
+from auth_service import (
+    AuthenticationError,
+    auth_enabled,
+    authenticate_ldap,
+    issue_session,
+    local_admin,
+    parse_session,
+)
+from config import (
+    AUTH_COOKIE_NAME,
+    AUTH_COOKIE_SECURE,
+    AUTH_SESSION_TTL_SECONDS,
+    INDEX_HTML,
+    MODEL_SETTINGS_PATH,
+    WEB_DIR,
+)
 from document_rewriter_service import rewrite_document
 from domain_admin_service import (
     DomainAdminError,
@@ -39,9 +54,14 @@ from sync_service import sync_index as run_sync_index
 from sync_service import sync_status as get_sync_status
 from wiki_health_service import wiki_health as get_wiki_health
 
-app = FastAPI(title="Knowledge Hub Admin", version="0.2.0")
+app = FastAPI(title="Knowledge Hub Admin", version="0.3.0")
 if (WEB_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=str(WEB_DIR / "assets")), name="assets")
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 class QueryRequest(BaseModel):
@@ -86,6 +106,25 @@ class RewriteDocumentRequest(BaseModel):
     owner: str = "nick"
 
 
+@app.middleware("http")
+async def require_authenticated_session(request: Request, call_next: Any) -> Response:
+    path = request.url.path
+    is_public = (
+        path == "/"
+        or path == "/health"
+        or path.startswith("/assets/")
+        or path.startswith("/api/auth/")
+    )
+    if not auth_enabled() or is_public:
+        return await call_next(request)
+
+    user = parse_session(request.cookies.get(AUTH_COOKIE_NAME))
+    if user is None:
+        return JSONResponse(status_code=401, content={"detail": "authentication_required"})
+    request.state.user = user
+    return await call_next(request)
+
+
 def read_index_html() -> str:
     return INDEX_HTML.read_text(encoding="utf-8")
 
@@ -97,6 +136,44 @@ def index() -> str:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
+    return {"ok": True}
+
+
+@app.get("/api/auth/session")
+def auth_session(request: Request) -> dict[str, Any]:
+    if not auth_enabled():
+        user = local_admin()
+        return {"authenticated": True, "auth_enabled": False, "user": user.as_dict()}
+    user = parse_session(request.cookies.get(AUTH_COOKIE_NAME))
+    return {
+        "authenticated": user is not None,
+        "auth_enabled": True,
+        "user": user.as_dict() if user else None,
+    }
+
+
+@app.post("/api/auth/login")
+def login(request: LoginRequest, response: Response) -> dict[str, Any]:
+    try:
+        user = authenticate_ldap(request.username, request.password)
+        session_token = issue_session(user)
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=session_token,
+        max_age=AUTH_SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+    return {"authenticated": True, "auth_enabled": auth_enabled(), "user": user.as_dict()}
+
+
+@app.post("/api/auth/logout")
+def logout(response: Response) -> dict[str, bool]:
+    response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
     return {"ok": True}
 
 

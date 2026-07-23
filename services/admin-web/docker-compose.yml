@@ -1,9 +1,13 @@
 services:
   admin-web:
-    build: .
+    build:
+      context: .
+      network: host
     container_name: llm-wiki-admin-web
     ports:
       - "18090:18090"
+    env_file:
+      - .env
     environment:
       PROJECT_ROOT: /data
       VAULT_PATH: /data/vault

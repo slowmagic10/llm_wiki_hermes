@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   Activity, Bot, BookOpen, Boxes, Braces, ChevronRight, CircleGauge, Database,
   FileInput, FileSearch, FolderOpen, Menu, RefreshCw, ScrollText, SearchCheck,
-  Settings2, ShieldCheck, X
+  LogOut, Settings2, ShieldCheck, UserRound, X
 } from '@lucide/vue'
 import { api } from './api'
 import DashboardView from './views/DashboardView.vue'
@@ -16,6 +16,7 @@ import IngestView from './views/IngestView.vue'
 import RagView from './views/RagView.vue'
 import RecordsView from './views/RecordsView.vue'
 import ToolsView from './views/ToolsView.vue'
+import LoginView from './views/LoginView.vue'
 
 type NavItem = { id: string; label: string; description: string; icon: any; component: any }
 type NavGroup = { label: string; items: NavItem[] }
@@ -62,6 +63,8 @@ const activeId = ref(allItems.some(item => item.id === initialId) ? initialId : 
 const sidebarOpen = ref(false)
 const health = ref<any>(null)
 const now = ref('')
+const session = ref<any>(null)
+const authLoading = ref(true)
 const active = computed(() => allItems.find(item => item.id === activeId.value) || allItems[0])
 
 function navigate(id: string) {
@@ -74,20 +77,54 @@ async function refreshHealth() {
   try { health.value = await api.get('/api/health-detail') } catch { health.value = null }
 }
 
-onMounted(() => {
+async function refreshSession() {
+  try {
+    session.value = await api.get('/api/auth/session')
+  } catch {
+    session.value = { authenticated: false }
+  } finally {
+    authLoading.value = false
+  }
+}
+
+function handleAuthenticated(nextSession: any) {
+  session.value = nextSession
+  authLoading.value = false
   refreshHealth()
+}
+
+async function logout() {
+  try { await api.post('/api/auth/logout') } finally {
+    session.value = { authenticated: false }
+    health.value = null
+  }
+}
+
+function handleAuthenticationRequired() {
+  if (!authLoading.value) session.value = { authenticated: false }
+}
+
+onMounted(() => {
+  refreshSession().then(() => {
+    if (session.value?.authenticated) refreshHealth()
+  })
   const updateClock = () => { now.value = new Date().toLocaleString('zh-CN', { hour12: false }) }
   updateClock()
   setInterval(updateClock, 30_000)
+  window.addEventListener('knowledge-hub:authentication-required', handleAuthenticationRequired)
   window.addEventListener('hashchange', () => {
     const id = location.hash.replace('#/', '')
     if (allItems.some(item => item.id === id)) activeId.value = id
   })
 })
+
+onUnmounted(() => window.removeEventListener('knowledge-hub:authentication-required', handleAuthenticationRequired))
 </script>
 
 <template>
-  <div class="app-shell">
+  <div v-if="authLoading" class="auth-loading">正在验证会话</div>
+  <LoginView v-else-if="!session?.authenticated" @authenticated="handleAuthenticated" />
+  <div v-else class="app-shell">
     <div v-if="sidebarOpen" class="sidebar-backdrop" @click="sidebarOpen = false"></div>
     <aside class="sidebar" :class="{ 'is-open': sidebarOpen }">
       <div class="brand">
@@ -133,6 +170,8 @@ onMounted(() => {
             {{ health?.summary?.overall === 'ok' ? '系统正常' : health ? '需要检查' : '检查中' }}
           </button>
           <span class="topbar__time">{{ now }}</span>
+          <span class="topbar__user"><UserRound :size="15" />{{ session?.user?.username }}</span>
+          <button class="icon-button" title="退出登录" @click="logout"><LogOut :size="17" /></button>
           <button class="icon-button" title="系统设置" @click="navigate('models')"><Settings2 :size="18" /></button>
         </div>
       </header>

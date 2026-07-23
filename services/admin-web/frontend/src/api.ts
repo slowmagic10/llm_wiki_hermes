@@ -1,10 +1,13 @@
 export type JsonRecord = Record<string, any>
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init)
+  const response = await fetch(url, { credentials: 'same-origin', ...init })
   const text = await response.text()
   let payload: any = text
   try { payload = text ? JSON.parse(text) : null } catch { /* keep text */ }
+  if (response.status === 401) {
+    window.dispatchEvent(new CustomEvent('knowledge-hub:authentication-required'))
+  }
   if (!response.ok) {
     const detail = payload?.detail?.message || payload?.detail || payload?.message || text
     throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))

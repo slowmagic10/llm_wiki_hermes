@@ -4,6 +4,19 @@ import os
 import re
 from pathlib import Path
 
+
+def env_bool(name: str, default: bool = False) -> bool:
+    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_csv(name: str, default: str = "") -> set[str]:
+    return {item.strip() for item in os.getenv(name, default).split(",") if item.strip()}
+
+
+def env_int(name: str, default: int) -> int:
+    return int(os.getenv(name, str(default)))
+
+
 PROJECT_ROOT = Path(os.getenv("PROJECT_ROOT", "/root/llm_wiki_hermes"))
 VAULT_PATH = Path(os.getenv("VAULT_PATH", str(PROJECT_ROOT / "vault"))).resolve()
 RAG_BASE_URL = os.getenv("RAG_BASE_URL", "http://127.0.0.1:18080")
@@ -19,6 +32,17 @@ DOMAIN_HOOK_SYNC_SCRIPT = Path(os.getenv("DOMAIN_HOOK_SYNC_SCRIPT", str(PROJECT_
 HERMES_HOOKS_PATH = Path(os.getenv("HERMES_HOOKS_PATH", "/root/.hermes/hooks"))
 WEB_DIR = Path(__file__).resolve().parent / "web"
 INDEX_HTML = WEB_DIR / "index.html"
+
+AUTH_MODE = os.getenv("AUTH_MODE", "disabled").strip().lower()
+AUTH_COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "knowledge_hub_session").strip() or "knowledge_hub_session"
+AUTH_COOKIE_SECURE = env_bool("AUTH_COOKIE_SECURE")
+AUTH_SESSION_SECRET = os.getenv("AUTH_SESSION_SECRET", "")
+AUTH_SESSION_TTL_SECONDS = env_int("AUTH_SESSION_TTL_SECONDS", 28800)
+LDAP_URL = os.getenv("LDAP_URL", "").strip()
+LDAP_BASE_DN = os.getenv("LDAP_BASE_DN", "").strip()
+LDAP_USERS_RDN = os.getenv("LDAP_USERS_RDN", "cn=users").strip() or "cn=users"
+LDAP_ADMIN_USERS = env_csv("LDAP_ADMIN_USERS", "knowledge-hub-admin")
+LDAP_CONNECT_TIMEOUT_SECONDS = env_int("LDAP_CONNECT_TIMEOUT_SECONDS", 5)
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]")

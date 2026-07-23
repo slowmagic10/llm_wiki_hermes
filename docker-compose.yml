@@ -86,6 +86,7 @@ services:
         condition: service_started
     env_file:
       - /etc/obsidian-rag-mcp.env
+      - ./services/admin-web/.env
     environment:
       PROJECT_ROOT: /root/llm_wiki_hermes
       VAULT_PATH: /root/llm_wiki_hermes/vault
